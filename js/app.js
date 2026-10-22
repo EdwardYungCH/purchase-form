@@ -912,6 +912,68 @@ function makePen(ctx, s) {
   };
 }
 
+/* ===== 官方表格範本（template/form.pdf，已清走示例資料） ===== */
+const PT = 25.4 / 72;                       // 1 pt = ? mm
+const CROP = { x: 18, y: 10, w: 586, h: 440 }; // 表格在範本頁上的範圍（pt，由上而下）
+const OFF_COLS = [[24.6, 154.0], [154.4, 203.6], [204.1, 224.9], [225.4, 260.3], [260.8, 302.8], [303.2, 366.6], [367.1, 402.0], [402.5, 465.4], [466.8, 496.3], [496.8, 549.5], [550.0, 592.4]];
+const OFF_ROWS = [[152.04, 186.0], [186.48, 220.56], [221.04, 255.0], [255.48, 289.56]];
+const FORM_K = { sets: 0.95, compact: 0.9 };
+const TPL = { page: null, loading: null, failed: false, cache: new Map() };
+async function loadTemplate() {
+  if (TPL.page || TPL.failed) return TPL.page;
+  if (!TPL.loading) TPL.loading = (async () => {
+    try {
+      await withTimeout(loadScript(CDN.pdfjs), 20000, 'PDF 程式庫載入逾時');
+      const lib = window.pdfjsLib;
+      if (!lib.GlobalWorkerOptions.workerPort) {
+        try { lib.GlobalWorkerOptions.workerPort = LOCAL ? new Worker(absURL(CDN.pdfjsWorker)) : new Worker(URL.createObjectURL(new Blob([`importScripts("${CDN.pdfjsWorker}");`], { type: 'application/javascript' }))); }
+        catch { lib.GlobalWorkerOptions.workerSrc = CDN.pdfjsWorker; }
+      }
+      const buf = await (await fetch(CDN.template || 'template/form.pdf')).arrayBuffer();
+      const doc = await lib.getDocument({ data: new Uint8Array(buf) }).promise;
+      TPL.page = await doc.getPage(1);
+    } catch (e) { console.warn('template', e); TPL.failed = true; }
+    return TPL.page;
+  })();
+  return TPL.loading;
+}
+const tplKey = (ppt) => Math.min(6, Math.ceil(ppt * 4) / 4);
+async function ensureTemplate(s) {
+  const page = await loadTemplate(); if (!page) return;
+  for (const k of Object.values(FORM_K)) {
+    const key = tplKey(s * PT * k);
+    if (TPL.cache.has(key)) continue;
+    const vp = page.getViewport({ scale: key });
+    const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+    await page.render({ canvasContext: g, viewport: vp }).promise;
+    TPL.cache.set(key, c);
+  }
+}
+function drawOfficial(pen, X, Y, k, form, g) {
+  const s = pen.s, ppt = s * PT * k, key = tplKey(ppt), tpl = TPL.cache.get(key);
+  if (!tpl) return false;
+  pen.ctx.imageSmoothingQuality = 'high';
+  pen.ctx.drawImage(tpl, CROP.x * key, CROP.y * key, CROP.w * key, CROP.h * key, X * s, Y * s, CROP.w * PT * k * s, CROP.h * PT * k * s);
+  const mx = (x) => X + (x - CROP.x) * PT * k, my = (y) => Y + (y - CROP.y) * PT * k, sz = (pt) => pt * PT * k;
+  if (g.payee) pen.text(g.payee, mx(194), my(72.0), sz(12));
+  if (form.amount != null) pen.text('$' + money(form.amount), mx(513.2), my(72.0), sz(12));
+  if (g.applicant) pen.text(g.applicant, mx(123.2), my(96.0), sz(12));
+  if (g.date) pen.text(g.date, mx(446), my(96.0), sz(12));
+  form.rows.forEach((r, i) => {
+    if (i > 3) return;
+    const [t, b] = OFF_ROWS[i], h = sz(b - t);
+    const cell = (c) => ({ x: mx(OFF_COLS[c][0]), w: sz(OFF_COLS[c][1] - OFF_COLS[c][0]) });
+    let c = cell(0); pen.box(r.name, c.x, my(t), c.w, h, { size: sz(12), min: sz(7), pad: sz(1.6), lh: 1.15 });
+    c = cell(1); pen.box(r.reason, c.x, my(t), c.w, h, { size: sz(12), min: sz(7), pad: sz(1.6), valign: 'top', lh: 1.15 });
+    if (r.consumable) { c = cell(2); pen.check(c.x + c.w / 2 - sz(1.5), my(t) + h / 2, sz(11)); }
+    [[3, r.location], [4, r.dept], [5, r.subgroup], [6, r.category], [7, r.grant], [8, r.person], [10, r.rdate]].forEach(([ci, v]) => {
+      c = cell(ci); pen.box(v, c.x, my(t), c.w, h, { size: sz(11), min: sz(6), align: 'center', lh: 1.12, pad: sz(1.2) });
+    });
+  });
+  return true;
+}
+
 const GRID = [2607, 992, 425, 709, 850, 1276, 709, 1276, 609, 1064, 868];
 function drawForm(pen, X, Y, form, g) {
   const W = 190, k = W / GRID.reduce((a, b) => a + b, 0), cols = GRID.map((v) => v * k);
@@ -1121,8 +1183,11 @@ function renderPage(page, s) {
   const pen = makePen(ctx, s);
   const g = { payee: S.settings.payee, applicant: S.settings.applicant, date: S.appDate };
   if (page.type === 'forms') {
-    if (S.settings.layout === 'compact') page.forms.forEach((f, i) => drawForm(pen, 10, 6 + i * 148.5, f, g));
-    else drawForm(pen, 10, 10, page.forms[0], g);
+    const lay = S.settings.layout === 'compact' ? 'compact' : 'sets', k = FORM_K[lay], w = CROP.w * PT * k, X = (A4.w - w) / 2;
+    page.forms.forEach((f, i) => {
+      const Y = lay === 'compact' ? 4 + i * 148.5 : 10;
+      if (!drawOfficial(pen, X, Y, k, f, g)) drawForm(pen, 10, lay === 'compact' ? 6 + i * 148.5 : 10, f, g);
+    });
   } else drawAttachment(pen, page);
   return c;
 }
@@ -1139,7 +1204,8 @@ const schedulePreview = debounce(renderPreview, 250);
 async function renderPreview() {
   const tok = ++pvToken;
   const pages = buildPages();
-  await ensureFonts(pages);
+  const dpr0 = Math.min(2, window.devicePixelRatio || 1);
+  await Promise.all([ensureFonts(pages), ensureTemplate(2.4 * dpr0)]);
   if (tok !== pvToken) return;
   const box = $('#pages'); box.innerHTML = '';
   const dpr = Math.min(2, window.devicePixelRatio || 1), s = 2.4 * dpr;
@@ -1154,7 +1220,7 @@ async function renderPreview() {
   });
 }
 async function openPage(i) {
-  const pages = buildPages(); await ensureFonts(pages);
+  const pages = buildPages(); await ensureFonts(pages); await ensureTemplate(6);
   const c = renderPage(pages[i], 6); $('#pageBig').innerHTML = ''; $('#pageBig').appendChild(c);
   $('#pageTitle').textContent = `第 ${i + 1} 頁`; $('#pageDlg').showModal();
 }
@@ -1168,7 +1234,7 @@ async function downloadPDF() {
     const dl = LOCAL ? null : await claudeUse('downloads');
     await withTimeout(loadScript(CDN.jspdf), 20000, 'PDF 程式庫載入逾時');
     const { jsPDF } = window.jspdf;
-    const pages = buildPages(); await ensureFonts(pages);
+    const pages = buildPages(); await ensureFonts(pages); await ensureTemplate(7.874);
     const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4', compress: true });
     for (let i = 0; i < pages.length; i++) {
       btn.textContent = `製作中 ${i + 1}/${pages.length}…`;
@@ -1199,7 +1265,7 @@ function saveBlob(blob, name) {
 async function printDirect() {
   const btn = $('#btnPrint'); btn.disabled = true; const old = btn.textContent; btn.textContent = '準備中…';
   try {
-    const pages = buildPages(); await ensureFonts(pages);
+    const pages = buildPages(); await ensureFonts(pages); await ensureTemplate(7.874);
     let area = $('#printArea'); if (!area) { area = document.createElement('div'); area.id = 'printArea'; document.body.appendChild(area); }
     area.innerHTML = '';
     const urls = [];
@@ -1475,6 +1541,6 @@ async function init() {
   // 預先載入文字辨識（背景進行）
   setTimeout(() => ensureWorker().catch(() => {}), 1200);
 }
-window.__app = { S, Parser, orderInfo, buildPages, renderPage, addFiles, suggestName };
+window.__app = { S, Parser, orderInfo, buildPages, renderPage, addFiles, suggestName, ensureTemplate, TPL };
 init();
 })();

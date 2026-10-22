@@ -1,5 +1,5 @@
 /* 離線快取：第一次打開時把程式、中文辨識資料存起來，之後沒有網絡也可以用 */
-const VERSION = 'pf-v3';
+const VERSION = 'pf-v4';
 const PRECACHE = [
   './', 'index.html', 'js/app.js', 'js/parser.js', 'manifest.webmanifest',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
@@ -8,7 +8,7 @@ const PRECACHE = [
   'vendor/tesseract-core/tesseract-core-simd-lstm.wasm.js', 'vendor/tesseract-core/tesseract-core-lstm.wasm.js',
   'vendor/opencc/full.js', 'vendor/jspdf/jspdf.umd.min.js',
   'vendor/pdfjs/pdf.min.js', 'vendor/pdfjs/pdf.worker.min.js',
-  'vendor/fonts/lxgw-wenkai-tc.css',
+  'vendor/fonts/lxgw-wenkai-tc.css', 'template/form.pdf',
 ];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => Promise.all(PRECACHE.map((u) => c.add(u).catch(() => {})))).then(() => self.skipWaiting()));
