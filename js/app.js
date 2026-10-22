@@ -596,10 +596,10 @@ function allocate(total, items) {
 function rowSpecs(o) {
   const info = orderInfo(o), specs = [];
   if (!info.subs.length) { specs.push({ key: 'pps#0', subKey: null, titles: info.titles, hkd: info.hkd, est: false }); return specs; }
+  // 一張淘寶訂單算一件貨品：名稱概括訂單內所有商品，金額用該訂單的實付港幣
   info.subs.forEach((g) => {
-    const items = g.items.length ? g.items.map((it) => ({ titles: [it.title], price: it.price, qty: it.qty })) : [{ titles: g.titles }];
-    const al = allocate(g.hkd, items);
-    items.forEach((it, i) => specs.push({ key: `${g.key}#${i}`, subKey: g.key, titles: it.titles, hkd: al[i].v, est: al[i].est }));
+    const titles = g.items.length ? g.items.map((it) => it.title) : g.titles;
+    specs.push({ key: `${g.key}#0`, subKey: g.key, titles, hkd: g.hkd, est: false });
   });
   if (specs.length === 1) {
     if (info.pps?.data.remark) specs[0].titles = [...specs[0].titles, info.pps.data.remark];
@@ -671,18 +671,18 @@ function renderOrders() {
   else box.innerHTML = S.orders.map((o, i) => {
     const info = orderInfo(o);
     const chips = info.busy ? '<span class="chip busy">辨識中</span>' : (info.issues.length ? info.issues.map(([c, t]) => `<span class="chip ${c}">${esc(t)}</span>`).join('') : (info.hkdPPS != null && info.hkdTB != null ? '<span class="chip ok">文件齊全・金額相符</span>' : '<span class="chip ok">文件齊全</span>'));
-    const nItems = S.rows.filter((r) => r.orderId === o.id).length, nForms = Math.ceil(nItems / 4);
+    const nItems = S.rows.filter((r) => r.orderId === o.id).length, nForms = Math.max(1, Math.ceil(nItems / rowsPerForm()));
     const subsHTML = info.subs.map((g, k) => {
       const letter = info.subs.length > 1 ? `訂單 ${String.fromCharCode(65 + k)}` : '淘寶訂單';
       const items = S.rows.filter((r) => r.orderId === o.id && r.subKey === g.key).length;
-      return `<div class="sord"><div class="sord-h"><b>${letter}</b><span class="mono">${esc(g.no || '未讀到編號')}</span><span class="mono">${g.hkd != null ? 'HK$' + money(g.hkd) : ''}</span><span>${items} 件貨品</span></div>
+      return `<div class="sord"><div class="sord-h"><b>${letter}</b><span class="mono">${esc(g.no || '未讀到編號')}</span><span class="mono">${g.hkd != null ? 'HK$' + money(g.hkd) : ''}</span></div>
         <div class="slots">${g.imgs.map((x) => thumbHTML(x, info)).join('')}</div></div>`;
     }).join('');
     const loose = `<div class="sord rc"><div class="sord-h"><b>收據／發票</b><span>${info.rc.length} 張・在下面「收據配對」對應貨品</span></div>
         <div class="slots">${info.rc.map((x) => thumbHTML(x, info)).join('')}${emptySlot(o.id, info.rc.length ? 'receipt+' : 'receipt')}</div></div>`;
     return `<article class="order" data-order="${o.id}">
       <div class="order-h"><span class="title">購物 ${i + 1}</span><span class="amt">${info.hkd != null ? 'HK$' + money(info.hkd) : 'HK$ —'}</span><span class="grow"></span>${chips}</div>
-      <div class="order-meta"><span>日期 <span class="mono">${esc(info.date || '—')}</span></span><span>${info.subs.length} 張淘寶訂單・${nItems} 件貨品・${nForms} 張申請表</span>${info.shop ? `<span>店舖 ${esc(toHK(info.shop))}</span>` : ''}</div>
+      <div class="order-meta"><span>日期 <span class="mono">${esc(info.date || '—')}</span></span><span>${info.subs.length} 張淘寶訂單・${nForms} 張申請表</span>${info.shop ? `<span>店舖 ${esc(toHK(info.shop))}</span>` : ''}</div>
       <div class="pps-row"><div class="slots">${info.pps ? thumbHTML(info.pps, info) : emptySlot(o.id, 'pps')}${info.subs.length ? '' : emptySlot(o.id, 'taobao')}</div></div>
       ${subsHTML}${loose}
       <div class="order-foot"><label>PPS 付款 HK$ <input inputmode="decimal" data-hkd="${o.id}" value="${info.hkdPPS != null ? money(info.hkdPPS) : ''}" aria-label="PPS 付款金額"></label>
@@ -740,7 +740,7 @@ function renderRows() {
   const box = $('#rows');
   if (!S.rows.length) { box.innerHTML = '<div class="empty-state">建立購物紀錄後，貨品會列在這裏。</div>'; return; }
   const forms = buildForms();
-  box.innerHTML = forms.map((f, i) => `<div class="form-group"><div class="form-h"><b>申請表 ${i + 1}</b><span>${f.rows.length} 件貨品</span><span class="mono" data-ftotal="${i}">${f.amountText}</span></div>${f.rows.map(rowHTML).join('')}</div>`).join('');
+  box.innerHTML = forms.map((f, i) => `<div class="form-group"><div class="form-h"><b>申請表 ${i + 1}</b><span>${f.rows.length} 行</span><span class="mono" data-ftotal="${i}">${f.amountText}</span></div>${f.rows.map(rowHTML).join('')}</div>`).join('');
 }
 function updateTotals() {
   buildForms().forEach((f, i) => { const el = document.querySelector(`[data-ftotal="${i}"]`); if (el) el.textContent = f.amountText; });
@@ -917,7 +917,9 @@ const PT = 25.4 / 72;                       // 1 pt = ? mm
 const CROP = { x: 18, y: 10, w: 586, h: 440 }; // 表格在範本頁上的範圍（pt，由上而下）
 const OFF_COLS = [[24.6, 154.0], [154.4, 203.6], [204.1, 224.9], [225.4, 260.3], [260.8, 302.8], [303.2, 366.6], [367.1, 402.0], [402.5, 465.4], [466.8, 496.3], [496.8, 549.5], [550.0, 592.4]];
 const OFF_ROWS = [[152.04, 186.0], [186.48, 220.56], [221.04, 255.0], [255.48, 289.56]];
-const FORM_K = { sets: 0.95, compact: 0.9 };
+const FORM_K = { sets: 0.95, compact: 0.95 };
+const HEAD_END = 151.56, ROW_U = 34.44, TAIL_START = 289.56; // 表頭、每行、表尾在範本上的位置（pt）
+const ROWS_MAX = Math.floor(((A4.h - 20) / (PT * FORM_K.sets) - (HEAD_END - CROP.y) - (CROP.y + CROP.h - TAIL_START)) / ROW_U);
 const TPL = { page: null, loading: null, failed: false, cache: new Map() };
 async function loadTemplate() {
   if (TPL.page || TPL.failed) return TPL.page;
@@ -954,15 +956,21 @@ function drawOfficial(pen, X, Y, k, form, g) {
   const s = pen.s, ppt = s * PT * k, key = tplKey(ppt), tpl = TPL.cache.get(key);
   if (!tpl) return false;
   pen.ctx.imageSmoothingQuality = 'high';
-  pen.ctx.drawImage(tpl, CROP.x * key, CROP.y * key, CROP.w * key, CROP.h * key, X * s, Y * s, CROP.w * PT * k * s, CROP.h * PT * k * s);
+  const n = Math.max(4, form.rows.length), H1 = HEAD_END - CROP.y;
+  const blit = (srcTop, hPt, dstPt) => {
+    const dy = Math.round((Y + dstPt * PT * k) * s), dh = Math.round((Y + (dstPt + hPt) * PT * k) * s) - dy;
+    pen.ctx.drawImage(tpl, CROP.x * key, srcTop * key, CROP.w * key, hPt * key, Math.round(X * s), dy, Math.round(CROP.w * PT * k * s), dh + 1);
+  };
+  blit(CROP.y, H1, 0);                                                   // 標題、欄位、表頭
+  for (let i = 0; i < n; i++) blit(HEAD_END, ROW_U, H1 + i * ROW_U);   // 每行貨品
+  blit(TAIL_START, CROP.y + CROP.h - TAIL_START, H1 + n * ROW_U);      // 例子行、註、書記欄
   const mx = (x) => X + (x - CROP.x) * PT * k, my = (y) => Y + (y - CROP.y) * PT * k, sz = (pt) => pt * PT * k;
   if (g.payee) pen.text(g.payee, mx(194), my(72.0), sz(12));
   if (form.amount != null) pen.text('$' + money(form.amount), mx(513.2), my(72.0), sz(12));
   if (g.applicant) pen.text(g.applicant, mx(123.2), my(96.0), sz(12));
   if (g.date) pen.text(g.date, mx(446), my(96.0), sz(12));
   form.rows.forEach((r, i) => {
-    if (i > 3) return;
-    const [t, b] = OFF_ROWS[i], h = sz(b - t);
+    const t = HEAD_END + 0.48 + i * ROW_U, h = sz(ROW_U - 0.48);
     const cell = (c) => ({ x: mx(OFF_COLS[c][0]), w: sz(OFF_COLS[c][1] - OFF_COLS[c][0]) });
     let c = cell(0); pen.box(r.name, c.x, my(t), c.w, h, { size: sz(12), min: sz(7), pad: sz(1.6), lh: 1.15 });
     c = cell(1); pen.box(r.reason, c.x, my(t), c.w, h, { size: sz(12), min: sz(7), pad: sz(1.6), valign: 'top', lh: 1.15 });
@@ -1073,8 +1081,9 @@ function drawForm(pen, X, Y, form, g) {
   });
 }
 
+const rowsPerForm = () => (TPL.failed ? 4 : ROWS_MAX);
 function buildForms() {
-  const s = S.settings, forms = [];
+  const s = S.settings, forms = [], per = rowsPerForm();
   const mk = (rows) => {
     const vals = rows.map((r) => r.hkd).filter((v) => v != null && !isNaN(v));
     const amount = vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) * 100) / 100 : null;
@@ -1082,8 +1091,8 @@ function buildForms() {
   };
   if (!S.rows.length) return [mk([])];
   if (s.group === 'order') {
-    S.orders.forEach((o) => { const rs = S.rows.filter((r) => r.orderId === o.id); for (let i = 0; i < rs.length; i += 4) forms.push(mk(rs.slice(i, i + 4))); });
-  } else for (let i = 0; i < S.rows.length; i += 4) forms.push(mk(S.rows.slice(i, i + 4)));
+    S.orders.forEach((o) => { const rs = S.rows.filter((r) => r.orderId === o.id); for (let i = 0; i < rs.length; i += per) forms.push(mk(rs.slice(i, i + per))); });
+  } else for (let i = 0; i < S.rows.length; i += per) forms.push(mk(S.rows.slice(i, i + per)));
   forms.forEach((f, i) => { f.no = i + 1; });
   return forms;
 }
@@ -1121,7 +1130,7 @@ function formAttachments(f, forms) {
 function buildPages() {
   const s = S.settings, pages = [], forms = buildForms();
   if (s.layout === 'compact') {
-    for (let i = 0; i < forms.length; i += 2) pages.push({ type: 'forms', forms: forms.slice(i, i + 2) });
+    forms.forEach((f) => pages.push({ type: 'forms', forms: [f] }));
     if (s.attach) forms.forEach((f) => pages.push(...formAttachments(f, forms)));
   } else {
     forms.forEach((f) => { pages.push({ type: 'forms', forms: [f] }); if (s.attach) pages.push(...formAttachments(f, forms)); });
@@ -1183,11 +1192,8 @@ function renderPage(page, s) {
   const pen = makePen(ctx, s);
   const g = { payee: S.settings.payee, applicant: S.settings.applicant, date: S.appDate };
   if (page.type === 'forms') {
-    const lay = S.settings.layout === 'compact' ? 'compact' : 'sets', k = FORM_K[lay], w = CROP.w * PT * k, X = (A4.w - w) / 2;
-    page.forms.forEach((f, i) => {
-      const Y = lay === 'compact' ? 4 + i * 148.5 : 10;
-      if (!drawOfficial(pen, X, Y, k, f, g)) drawForm(pen, 10, lay === 'compact' ? 6 + i * 148.5 : 10, f, g);
-    });
+    const k = FORM_K.sets, w = CROP.w * PT * k, X = (A4.w - w) / 2;
+    page.forms.forEach((f) => { if (!drawOfficial(pen, X, 10, k, f, g)) drawForm(pen, 10, 10, f, g); });
   } else drawAttachment(pen, page);
   return c;
 }
