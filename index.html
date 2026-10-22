@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="zh-HK">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="淘寶訂單、PPS 紀錄和收據截圖 → 申請支票支付購物款項表格連附件，A4 列印。">
+<meta name="theme-color" content="#2443c4">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="購物記錄表">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>購物記錄表助手</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=LXGW+WenKai+TC:wght@400;700&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="vendor/fonts/lxgw-wenkai-tc.css">
+<style>
+/* Layout: one working column of four numbered steps, a sticky top bar; forms render on canvas exactly as printed. */
+:root {
+  --bg: #eef1f4;
+  --surface: #ffffff;
+  --surface-2: #f6f8fa;
+  --ink: #18202b;
+  --muted: #5a6574;
+  --line: #d6dce4;
+  --accent: #2443c4;      /* 原子筆藍 */
+  --accent-ink: #ffffff;
+  --accent-soft: #e5eafb;
+  --taobao: #e8590c;
+  --pps: #0d7d8c;
+  --receipt: #6b5b3e;
+  --ok: #1d7a46;
+  --warn: #a8640a;
+  --bad: #c0352b;
+  --shadow: 0 1px 2px rgba(20,30,50,.06), 0 4px 14px rgba(20,30,50,.06);
+  --f-display: "LXGW WenKai TC", "Kaiti TC", "DFKai-SB", "BiauKai", serif;
+  --f-ui: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --f-num: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+  --r: 10px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #11151b; --surface: #1a2029; --surface-2: #151a22; --ink: #e5e9ef; --muted: #9ba6b5; --line: #2d3644;
+  --accent: #8aa2ff; --accent-ink: #0d1430; --accent-soft: #1f2a4d; --taobao: #ff8a4c; --pps: #4cc3d1; --receipt: #c9b48a;
+  --ok: #4fc483; --warn: #e3a54a; --bad: #ff7a70; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.25); color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #11151b; --surface: #1a2029; --surface-2: #151a22; --ink: #e5e9ef; --muted: #9ba6b5; --line: #2d3644;
+  --accent: #8aa2ff; --accent-ink: #0d1430; --accent-soft: #1f2a4d; --taobao: #ff8a4c; --pps: #4cc3d1; --receipt: #c9b48a;
+  --ok: #4fc483; --warn: #e3a54a; --bad: #ff7a70; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.25); color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.6 var(--f-ui); }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--surface); }
+.wrap { max-width: 1120px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--surface); border-bottom: 1px solid var(--line); }
+.top .wrap { display: flex; align-items: center; gap: 12px; padding-block: 10px; flex-wrap: wrap; }
+.brand { flex: 1 1 260px; min-width: 0; }
+.brand h1 { font: 700 22px/1.2 var(--f-display); margin: 0; letter-spacing: .02em; }
+.brand p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+.top-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; font-size: 12.5px; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); white-space: nowrap; }
+.chip.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
+.chip.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+.chip.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+.chip.busy::before { content: ""; width: 9px; height: 9px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .chip.busy::before { animation: none; } }
+
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line); background: var(--surface); padding: 7px 14px; border-radius: 8px; font-size: 14px; line-height: 1.3; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 500; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.small { padding: 4px 10px; font-size: 13px; }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+.btn.ghost:hover { color: var(--ink); border-color: var(--line); }
+.btn.danger { color: var(--bad); }
+.btn:disabled { opacity: .5; cursor: default; }
+
+main { padding-block: 20px 60px; display: grid; gap: 22px; }
+.step { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 18px 20px 20px; min-width: 0; }
+.step-h { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.step-h .n { font: 700 15px var(--f-num); color: var(--accent); background: var(--accent-soft); border-radius: 6px; padding: 1px 8px; }
+.step-h h2 { margin: 0; font: 700 20px/1.3 var(--f-display); }
+.step-h .sub { color: var(--muted); font-size: 13.5px; flex: 1 1 240px; }
+.step-h .right { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+
+.drop { border: 2px dashed var(--line); border-radius: 12px; padding: 22px 16px; text-align: center; background: var(--surface-2); transition: border-color .15s, background .15s; }
+.drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.drop strong { display: block; font-size: 16px; margin-bottom: 4px; }
+.drop .hint { color: var(--muted); font-size: 13px; }
+.drop .kinds { display: flex; gap: 8px; justify-content: center; margin: 10px 0 12px; flex-wrap: wrap; }
+.k-taobao { color: var(--taobao); }
+.k-pps { color: var(--pps); }
+.k-receipt { color: var(--receipt); }
+.tag { font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 5px; border: 1px solid currentColor; background: var(--surface); white-space: nowrap; }
+
+.notice { margin-top: 12px; padding: 10px 14px; border-radius: 10px; background: var(--accent-soft); font-size: 13.5px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.notice.warn { background: color-mix(in srgb, var(--warn) 14%, var(--surface)); }
+.notice.bad { background: color-mix(in srgb, var(--bad) 12%, var(--surface)); }
+
+.orders { display: grid; gap: 14px; }
+.order { border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px 14px; background: var(--surface); min-width: 0; }
+.order-h { display: flex; gap: 10px 14px; align-items: center; flex-wrap: wrap; }
+.order-h .title { font: 700 16px var(--f-display); }
+.mono { font-family: var(--f-num); font-size: 13px; font-variant-numeric: tabular-nums; }
+.amt { font: 700 19px var(--f-num); font-variant-numeric: tabular-nums; }
+.order-h .grow { flex: 1; }
+.order-meta { display: flex; gap: 8px 16px; flex-wrap: wrap; color: var(--muted); font-size: 13px; margin: 6px 0 10px; }
+.slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.thumb { border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); display: grid; grid-template-rows: auto 1fr auto; min-width: 0; overflow: hidden; }
+.thumb .th { display: flex; align-items: center; gap: 6px; padding: 5px 7px; font-size: 12px; }
+.thumb .th select { font-size: 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 5px; padding: 1px 2px; max-width: 100%; }
+.thumb .img { height: 150px; display: flex; align-items: center; justify-content: center; background: repeating-conic-gradient(var(--surface-2) 0 25%, var(--surface) 0 50%) 0 0 / 14px 14px; position: relative; }
+.thumb .img img { max-height: 146px; max-width: 100%; object-fit: contain; box-shadow: 0 0 0 1px var(--line); }
+.thumb .img .state { position: absolute; inset: auto 6px 6px auto; }
+.thumb .tb { display: flex; gap: 4px; padding: 5px; flex-wrap: wrap; }
+.thumb .tb select { font-size: 12px; flex: 1 1 100%; border: 1px solid var(--line); border-radius: 6px; padding: 3px; background: var(--surface); min-width: 0; }
+.slot-empty { border: 1px dashed var(--line); border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 120px; color: var(--muted); font-size: 13px; padding: 8px; text-align: center; }
+.order-foot { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 10px; font-size: 13.5px; }
+.order-foot label { display: inline-flex; gap: 6px; align-items: center; }
+.order-foot input { width: 110px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); font-family: var(--f-num); }
+.tray { margin-top: 16px; border-top: 1px dashed var(--line); padding-top: 12px; }
+.tray h3 { margin: 0 0 8px; font-size: 14.5px; }
+.empty-state { color: var(--muted); font-size: 14px; padding: 8px 2px; }
+
+.global { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px 14px; margin-bottom: 14px; }
+.field { display: grid; gap: 3px; min-width: 0; }
+.field > span { font-size: 12.5px; color: var(--muted); }
+.field input, .field select { width: 100%; padding: 6px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); min-width: 0; }
+.field input:focus, .field select:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+.check { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; padding-top: 4px; }
+.shared { border: 1px solid var(--line); border-radius: var(--r); background: var(--surface-2); padding: 12px 14px; margin-bottom: 14px; }
+.shared-h { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.shared-h strong { font-size: 14.5px; }
+.shared-h .sub { color: var(--muted); font-size: 12.5px; flex: 1 1 200px; }
+.fgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 12px; }
+.rows { display: grid; gap: 10px; }
+.row { border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px 12px; display: grid; gap: 8px; min-width: 0; }
+.row-top { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: end; }
+.row-top .field input { font-size: 16px; font-weight: 500; }
+.row-src { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.row-src button { font-size: 12px; padding: 0 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); margin: 2px 4px 2px 0; }
+.ordref { font-size: 12px; color: var(--muted); display: grid; gap: 1px; padding-bottom: 4px; }
+.ordref b { color: var(--ink); font: 700 13px var(--f-num); }
+.more summary { cursor: pointer; font-size: 13px; color: var(--muted); padding: 2px 0; overflow-wrap: anywhere; }
+.more summary span { color: var(--ink); }
+.more[open] summary { margin-bottom: 8px; }
+.rule-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; background: var(--accent-soft); border-radius: 8px; padding: 8px 10px; }
+.rule-form .field { flex: 1 1 150px; }
+
+.pv-bar { display: flex; gap: 10px 18px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; font-size: 14px; }
+.pv-bar label { display: inline-flex; gap: 6px; align-items: center; }
+.pv-bar select { padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.pages { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 16px; }
+.page { display: grid; gap: 4px; justify-items: center; }
+.page canvas { width: 100%; max-width: 100%; height: auto; background: #fff; box-shadow: 0 0 0 1px var(--line), 0 6px 18px rgba(20,30,50,.12); border-radius: 2px; cursor: zoom-in; }
+.page span { font-size: 12px; color: var(--muted); }
+.dl-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.dl-row .sub { color: var(--muted); font-size: 13px; flex: 1 1 260px; }
+
+dialog { border: 1px solid var(--line); border-radius: 14px; padding: 0; background: var(--surface); color: var(--ink); width: min(980px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+dialog::backdrop { background: rgba(10,14,20,.55); }
+.dlg-h { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--surface); z-index: 2; }
+.dlg-h h3 { margin: 0; font: 700 18px var(--f-display); flex: 1; }
+.dlg-b { padding: 14px 16px 18px; overflow: auto; }
+.crop-stage { position: relative; margin: 0 auto; touch-action: none; user-select: none; max-width: 100%; }
+.crop-stage canvas { display: block; width: 100%; height: auto; }
+.crop-shade { position: absolute; inset: 0; pointer-events: none; }
+.crop-box { position: absolute; border: 2px solid var(--accent); box-shadow: 0 0 0 9999px rgba(10,14,20,.5); cursor: move; }
+.crop-wrap { position: relative; overflow: hidden; max-width: 100%; }
+.h { position: absolute; width: 22px; height: 22px; background: var(--accent); border: 2px solid #fff; border-radius: 50%; transform: translate(-50%, -50%); }
+.h.nw { left: 0; top: 0; cursor: nwse-resize; } .h.ne { left: 100%; top: 0; cursor: nesw-resize; }
+.h.sw { left: 0; top: 100%; cursor: nesw-resize; } .h.se { left: 100%; top: 100%; cursor: nwse-resize; }
+.h.n { left: 50%; top: 0; cursor: ns-resize; width: 30px; height: 14px; border-radius: 7px; } .h.s { left: 50%; top: 100%; cursor: ns-resize; width: 30px; height: 14px; border-radius: 7px; }
+.h.w { left: 0; top: 50%; cursor: ew-resize; width: 14px; height: 30px; border-radius: 7px; } .h.e { left: 100%; top: 50%; cursor: ew-resize; width: 14px; height: 30px; border-radius: 7px; }
+.crop-tools { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.big-page canvas { width: 100%; height: auto; background: #fff; box-shadow: 0 0 0 1px var(--line); }
+
+.set-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.set-grid textarea, .rules textarea { width: 100%; min-height: 110px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 13.5px; resize: vertical; }
+.rules textarea { min-height: 260px; font-family: var(--f-num); font-size: 13px; line-height: 1.55; }
+.set-sec { margin-top: 18px; }
+.set-sec h4 { margin: 0 0 6px; font-size: 15px; }
+.set-sec p { margin: 0 0 8px; color: var(--muted); font-size: 13px; }
+.toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 9px 16px; border-radius: 10px; font-size: 14px; z-index: 50; max-width: calc(100vw - 32px); box-shadow: var(--shadow); }
+#printArea { display: none; }
+@media print {
+  @page { size: A4; margin: 0; }
+  body { background: #fff !important; }
+  body > *:not(#printArea) { display: none !important; }
+  #printArea { display: block !important; }
+  #printArea img { display: block; width: 210mm; height: 297mm; break-after: page; page-break-after: always; }
+  #printArea img:last-child { break-after: auto; page-break-after: auto; }
+}
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+@media (max-width: 560px) {
+  .step { padding: 14px 12px 16px; }
+  .row-top { grid-template-columns: minmax(0, 1fr) auto; }
+  .row-top .ordref { grid-column: 1 / -1; }
+  .slots { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .thumb .img { height: 120px; } .thumb .img img { max-height: 116px; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <h1>購物記錄表助手</h1>
+      <p>淘寶訂單、PPS 紀錄和收據 → 申請支票支付購物款項表格連附件，下載 A4 PDF 列印</p>
+    </div>
+    <div class="top-actions">
+      <span id="ocrChip" class="chip">文字辨識：未載入</span>
+      <button id="btnSettings" class="btn" type="button">設定</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="step" id="s1">
+    <div class="step-h"><span class="n">1</span><h2>上載截圖</h2><span class="sub">一次過揀晒所有截圖和收據都可以，工具會自動分類，再按訂單編號配對。</span></div>
+    <div class="drop" id="drop">
+      <strong>拖放檔案到這裏，或按下面的按鈕揀選</strong>
+      <div class="kinds"><span class="tag k-taobao">淘寶訂單截圖</span><span class="tag k-pps">PPS 交易紀錄截圖</span><span class="tag k-receipt">收據相片／電子發票 PDF</span></div>
+      <label class="btn primary" for="fileIn">選擇檔案</label>
+      <input id="fileIn" class="sr" type="file" accept="image/*,application/pdf" multiple>
+      <div class="hint" style="margin-top:8px">電腦上亦可以截圖後直接按 Ctrl+V 貼上。所有圖片只在這個瀏覽器內處理，不會上載。</div>
+    </div>
+    <div id="demoNote" class="notice" hidden><span>現在顯示的是<b>示範資料</b>（虛構訂單）。上載你自己的截圖後會自動清除。</span><button class="btn small" id="btnClearDemo" type="button">清除示範</button></div>
+    <div id="ocrNote" class="notice warn" hidden></div>
+  </section>
+
+  <section class="step" id="s2">
+    <div class="step-h"><span class="n">2</span><h2>核對訂單</h2><span class="sub">檢查每張訂單的三樣文件是否齊全、金額是否相符；分錯了可以用下拉選單搬動。</span>
+      <div class="right"><button class="btn small" id="btnAddOrder" type="button">＋ 新增空白訂單</button></div></div>
+    <div class="orders" id="orders"></div>
+    <div class="tray" id="tray" hidden><h3>未配對的圖片</h3><div class="slots" id="trayList"></div></div>
+  </section>
+
+  <section class="step" id="s3">
+    <div class="step-h"><span class="n">3</span><h2>填寫表格</h2><span class="sub">貨品名稱已自動精簡並轉成繁體，可以直接修改。</span></div>
+    <div class="global">
+      <label class="field"><span>商戶名稱（收票人）</span><input id="g_payee" autocomplete="off"></label>
+      <label class="field"><span>申請人姓名</span><input id="g_applicant" autocomplete="off"></label>
+      <label class="field"><span>申請日期（可留空，簽名時手寫）</span><input id="g_date" autocomplete="off" placeholder="例如 22/10/2026"></label>
+      <label class="field"><span>分表方式</span>
+        <select id="g_group"><option value="order">每張訂單一張表格</option><option value="merge">合併填寫（每張表格 4 行）</option></select></label>
+    </div>
+    <div class="shared">
+      <div class="shared-h"><strong>全部貨品共用</strong><span class="sub">填好後按「套用到全部」；新加入的貨品亦會用這些設定。每行貨品仍可以個別修改。</span>
+        <button class="btn small primary" id="btnApplyAll" type="button">套用到全部</button></div>
+      <div class="fgrid" id="sharedFields"></div>
+    </div>
+    <div class="rows" id="rows"></div>
+  </section>
+
+  <section class="step" id="s4">
+    <div class="step-h"><span class="n">4</span><h2>預覽及下載</h2><span class="sub" id="pvSummary"></span></div>
+    <div class="pv-bar">
+      <label>每頁表格 <select id="pv_per"><option value="2">2 張（半頁一張）</option><option value="1">1 張</option></select></label>
+      <label><input type="checkbox" id="pv_att" checked> 附上截圖附件（每張訂單一頁）</label>
+      <label><input type="checkbox" id="pv_cap" checked> 附件頁頂加上訂單資料</label>
+    </div>
+    <div class="pages" id="pages"></div>
+    <div class="dl-row">
+      <button class="btn primary" id="btnPrint" type="button" hidden>直接列印</button>
+      <button class="btn primary" id="btnPDF" type="button">下載 PDF</button>
+      <span class="sub" id="dlNote">用電腦或手機開啟 PDF 後，以 A4、「實際大小」(100%) 列印。</span>
+    </div>
+  </section>
+</main>
+
+<dialog id="cropDlg" aria-labelledby="cropTitle">
+  <div class="dlg-h"><h3 id="cropTitle">裁剪圖片</h3><button class="btn primary" id="cropDone" type="button">完成</button></div>
+  <div class="dlg-b">
+    <div class="crop-tools">
+      <button class="btn small" id="cropAuto" type="button">自動裁剪</button>
+      <button class="btn small" id="cropFull" type="button">用整張圖</button>
+      <button class="btn small" id="cropRot" type="button">向右轉 90°</button>
+      <span class="chip" id="cropInfo"></span>
+    </div>
+    <div class="crop-wrap" id="cropWrap"><div class="crop-stage" id="cropStage"><canvas id="cropCanvas"></canvas><div class="crop-box" id="cropBox">
+      <i class="h nw" data-h="nw"></i><i class="h n" data-h="n"></i><i class="h ne" data-h="ne"></i><i class="h e" data-h="e"></i>
+      <i class="h se" data-h="se"></i><i class="h s" data-h="s"></i><i class="h sw" data-h="sw"></i><i class="h w" data-h="w"></i></div></div></div>
+  </div>
+</dialog>
+
+<dialog id="pageDlg" aria-labelledby="pageTitle">
+  <div class="dlg-h"><h3 id="pageTitle">預覽</h3><button class="btn" id="pageClose" type="button">關閉</button></div>
+  <div class="dlg-b big-page" id="pageBig"></div>
+</dialog>
+
+<dialog id="setDlg" aria-labelledby="setTitle">
+  <div class="dlg-h"><h3 id="setTitle">設定</h3><span class="chip" id="syncChip">只儲存在這部裝置</span><button class="btn primary" id="setSave" type="button">儲存</button></div>
+  <div class="dlg-b">
+    <div class="set-sec" style="margin-top:0">
+      <h4>下拉選單選項</h4>
+      <p>每行一個選項。填表時新輸入的內容亦會自動加進這裏。</p>
+      <div class="set-grid" id="optEditors"></div>
+    </div>
+    <div class="set-sec rules">
+      <h4>貨品名稱詞典</h4>
+      <p>每行一條規則：<span class="mono">關鍵字1|關鍵字2 = 表格上的名稱</span>。商品標題含有任何一個關鍵字（簡體或繁體都可以），就用該名稱。上面的規則優先。</p>
+      <textarea id="rulesText" spellcheck="false"></textarea>
+    </div>
+    <div class="set-sec">
+      <h4>精簡時刪除的字眼</h4>
+      <p>詞典找不到時，工具會刪除這些廣告字眼，再截取標題頭十多個字。用「|」分隔。</p>
+      <textarea id="stopText" spellcheck="false" style="width:100%;min-height:70px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--surface)"></textarea>
+    </div>
+    <div class="set-sec" id="setPort" hidden>
+      <h4>匯出／匯入設定</h4>
+      <p>設定只儲存在這部裝置的瀏覽器。想在另一部電腦或手機用同一套選項和詞典，可以先匯出，再在那部裝置匯入。</p>
+      <button class="btn small" id="btnExport" type="button">匯出設定檔</button> <button class="btn small" id="btnImport" type="button">匯入設定檔</button>
+      <input id="importIn" class="sr" type="file" accept="application/json,.json">
+    </div>
+    <div class="set-sec">
+      <h4>還原</h4>
+      <p>把選項、詞典和預設值還原成工具原本的設定。</p>
+      <button class="btn small danger" id="setReset" type="button">還原預設設定</button> <span id="resetConfirm" hidden><b>確定還原？</b> <button class="btn small danger" id="setResetYes" type="button">確定</button> <button class="btn small" id="setResetNo" type="button">取消</button></span>
+    </div>
+  </div>
+</dialog>
+
+<script>
+window.PF_LIBS = {
+  local: true,
+  tess: 'vendor/tesseract/tesseract.min.js',
+  tessWorker: 'vendor/tesseract/worker.min.js',
+  tessCore: 'vendor/tesseract-core/',
+  opencc: 'vendor/opencc/full.js',
+  pdfjs: 'vendor/pdfjs/pdf.min.js',
+  pdfjsWorker: 'vendor/pdfjs/pdf.worker.min.js',
+  jspdf: 'vendor/jspdf/jspdf.umd.min.js',
+};
+</script>
+<script src="js/parser.js"></script>
+<script src="js/app.js"></script>
+<script>
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
+</script>
+</body>
+</html>

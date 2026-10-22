@@ -1,0 +1,16 @@
+{
+  "name": "購物記錄表助手",
+  "short_name": "購物記錄表",
+  "description": "淘寶訂單、PPS 紀錄和收據截圖 → 申請支票支付購物款項表格連附件，A4 列印。",
+  "lang": "zh-HK",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#eef1f4",
+  "theme_color": "#2443c4",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
