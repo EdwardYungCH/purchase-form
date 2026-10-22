@@ -82,7 +82,7 @@ LED = LED燈
 const DEFAULT_STOP = '包郵|包邮|正品|現貨|现货|官方|旗艦店|旗舰店|專營店|专营店|新款|爆款|熱賣|热卖|促銷|促销|特價|特价|順豐|顺丰|當天發|当天发|批發|批发|廠家|厂家|直銷|直销|高品質|高品质|超強|超强|升級版|升级版|適用|适用|專用|专用|2024|2025|2026|多件|等';
 
 const DEFAULT_SETTINGS = {
-  v: 1, payee: 'YCH', applicant: 'YCH', group: 'order', perPage: 2, attach: true, caption: true,
+  v: 1, payee: 'YCH', applicant: 'YCH', group: 'order', layout: 'sets', attach: true, caption: true,
   defaults: { reason: '比賽', consumable: true, location: '', dept: '', subgroup: '', category: '', grant: '', person: '', rdate: '' },
   options: {
     reason: ['比賽', '課程', '活動', '佈置壁報'],
@@ -100,7 +100,7 @@ const DEFAULT_SETTINGS = {
 /* ================= 狀態 ================= */
 const S = {
   settings: clone(DEFAULT_SETTINGS),
-  images: new Map(), orders: [], rows: [], demo: false, openRows: new Set(), appDate: '',
+  images: new Map(), orders: [], rows: [], demo: false, openRows: new Set(), deleted: new Set(), appDate: '',
   ocr: { worker: null, starting: null, failed: null, queue: [], busy: false },
   conv: null, convTried: false, sync: { ref: null },
 };
@@ -275,17 +275,48 @@ async function addFiles(files, target) {
     try {
       if (/pdf/i.test(f.type) || /\.pdf$/i.test(f.name)) await addPDF(f, target);
       else {
+        const meta = /png$/i.test(f.type) || /\.png$/i.test(f.name) ? await readPngMeta(f) : null;
         const base = await fileToCanvas(f);
         const img = newImage(f.name, base, target);
-        enqueueOCR(img);
+        if (meta) { img.data = extData(meta); img.kind = 'taobao'; img.kindManual = true; img.status = 'done'; img.crop = { x: 0, y: 0, w: 1, h: 1 }; img.fromExt = true; autoAssign(img); }
+        else enqueueOCR(img);
       }
     } catch (e) { console.error(e); toast(`「${f.name}」讀取失敗：${e.message || e}`, 4000); }
   }
   renderAll();
 }
+/* 讀取「淘寶訂單截圖」擴充功能寫入 PNG 的訂單資料（tEXt: pf-data） */
+async function readPngMeta(file) {
+  try {
+    const b = new Uint8Array(await file.arrayBuffer());
+    if (b[0] !== 0x89 || b[1] !== 0x50) return null;
+    let i = 8;
+    while (i + 8 < b.length) {
+      const len = (b[i] << 24 | b[i + 1] << 16 | b[i + 2] << 8 | b[i + 3]) >>> 0;
+      const type = String.fromCharCode(b[i + 4], b[i + 5], b[i + 6], b[i + 7]);
+      if (type === 'tEXt') {
+        const body = b.subarray(i + 8, i + 8 + len), z = body.indexOf(0);
+        const key = String.fromCharCode(...body.subarray(0, z));
+        if (key === 'pf-data') {
+          const bin = atob(String.fromCharCode(...body.subarray(z + 1)));
+          const u8 = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+          return JSON.parse(new TextDecoder().decode(u8));
+        }
+      }
+      if (type === 'IDAT' || type === 'IEND') break;
+      i += 12 + len;
+    }
+  } catch (e) { console.warn('png meta', e); }
+  return null;
+}
+function extData(m) {
+  const items = (m.items || []).filter((it) => it && it.title).map((it) => ({ title: it.title, sku: it.sku || '', price: it.price ?? null, qty: it.qty || 1 }));
+  return { kind: 'taobao', fromExt: true, orderNo: m.orderNo || '', hkd: m.paidHKD ?? null, goodsCNY: m.goodsCNY ?? null, discountCNY: m.discountCNY || 0,
+    shipCNY: m.shipCNY || 0, date: (m.created || '').slice(0, 10), shop: m.shop || '', titles: items.map((it) => it.title), items, itemPrices: items.map((it) => it.price).filter((v) => v != null) };
+}
 function newImage(name, base, target) {
   const img = { id: uid('i'), name, base, rot: 0, crop: { x: 0, y: 0, w: 1, h: 1 }, kind: target?.kind || null, kindManual: !!target?.kind,
-    status: 'queued', data: {}, orderId: null, assignManual: !!target?.orderId, progress: 0 };
+    status: 'queued', data: {}, orderId: null, assignManual: !!target?.orderId, progress: 0, subKey: target?.subKey || null };
   img.crop = trimBorders(base);
   S.images.set(img.id, img);
   if (target?.orderId) { const o = S.orders.find((o) => o.id === target.orderId); if (o) attach(img, o, target.kind || 'receipt'); }
@@ -434,32 +465,65 @@ function orderInfo(o) {
   const tb = o.taobao.map((id) => S.images.get(id)).filter(Boolean);
   const pps = o.pps ? S.images.get(o.pps) : null;
   const rc = o.receipts.map((id) => S.images.get(id)).filter(Boolean);
-  const tbd = tb.find((x) => x.data.orderNo) || tb.find((x) => x.data.hkd != null) || tb[0];
-  const nos = [...new Set(tb.map((x) => x.data.orderNo).filter(Boolean))];
-  const orderNo = nos.length ? nos.join('、') : (tbd?.data.orderNo || pps?.data.orderNo || rc.find((x) => x.data.orderNo)?.data.orderNo || '');
-  const hkdPPS = pps?.data.hkd ?? null;
   const subs = tbGroups(tb);
+  const nos = subs.map((g) => g.no).filter(Boolean);
+  const orderNo = nos.length ? nos.join('、') : (pps?.data.orderNo || '');
+  const hkdPPS = o.hkdOverride ?? pps?.data.hkd ?? null;
   const tbVals = subs.map((g) => g.hkd).filter((v) => v != null);
   const hkdTB = tbVals.length ? Math.round(tbVals.reduce((a, b) => a + b, 0) * 100) / 100 : null;
-  const hkd = o.hkdOverride ?? hkdPPS ?? hkdTB;
+  const hkd = hkdPPS ?? hkdTB;
   const date = pps?.data.date || tb.map((x) => x.data.date).find(Boolean) || '';
   const titles = [...tb.flatMap((x) => x.data.titles || []), pps?.data.remark].filter(Boolean);
-  const cands = [];
-  tb.forEach((x) => { const d = x.data; if (d.goodsCNY != null) { const g = d.goodsCNY, dc = d.discountCNY || 0, sh = d.shipCNY || 0; cands.push(g, g - dc, g + sh, g - dc + sh); } (d.itemPrices || []).forEach((p) => cands.push(p)); if ((d.itemPrices || []).length > 1) cands.push(d.itemPrices.reduce((a, b) => a + b, 0)); });
+  const cands = subs.flatMap(subCands);
   if (pps?.data.cny != null) cands.push(pps.data.cny);
   const issues = [];
   if (!tb.length) issues.push(['bad', '缺淘寶訂單']);
   if (!pps) issues.push(['bad', '缺 PPS 紀錄']);
-  if (!rc.length) issues.push(['warn', '缺收據']);
+  const orows = S.rows.filter((r) => r.orderId === o.id);
+  const noRc = orows.filter((r) => !rc.some((x) => receiptRows(x, o, subs).includes(r.id))).length;
+  if (orows.length && noRc) issues.push(['warn', orows.length > 1 ? `${noRc} 件貨品未配對收據` : '缺收據']);
   if (hkdPPS != null && hkdTB != null && Math.abs(hkdPPS - hkdTB) > 0.011) issues.push(['warn', `淘寶${subs.length > 1 ? '合計' : ''} HK$${money(hkdTB)} 與 PPS HK$${money(hkdPPS)} 不同`]);
   const busy = [...tb, pps, ...rc].filter(Boolean).some((x) => x.status === 'queued' || x.status === 'ocr');
   return { tb, pps, rc, subs, nos, orderNo, hkd, hkdPPS, hkdTB, date, titles, cands, issues, busy, shop: pps?.data.shop || '' };
 }
-/* 同一訂單編號的多張截圖算一張訂單 */
+/* 同一訂單編號的多張截圖算一張淘寶訂單 */
 function tbGroups(tb) {
   const map = new Map();
-  tb.forEach((x) => { const k = x.data.orderNo || x.id; if (!map.has(k)) map.set(k, { key: k, imgs: [], hkd: null, titles: [] }); const g = map.get(k); g.imgs.push(x); if (g.hkd == null && x.data.hkd != null) g.hkd = x.data.hkd; g.titles.push(...(x.data.titles || [])); });
+  tb.forEach((x) => {
+    const k = x.data.orderNo || x.id;
+    if (!map.has(k)) map.set(k, { key: k, no: x.data.orderNo || '', imgs: [], hkd: null, titles: [], items: [], date: '' });
+    const g = map.get(k); g.imgs.push(x);
+    if (g.hkd == null && x.data.hkd != null) g.hkd = x.data.hkd;
+    if (!g.date && x.data.date) g.date = x.data.date;
+    g.titles.push(...(x.data.titles || []));
+    (x.data.items || []).forEach((it) => { if (!g.items.some((y) => y.title === it.title && y.sku === it.sku)) g.items.push(it); });
+  });
   return [...map.values()];
+}
+function subCands(g) {
+  const c = [];
+  g.imgs.forEach((x) => {
+    const d = x.data;
+    if (d.goodsCNY != null) { const gg = d.goodsCNY, dc = d.discountCNY || 0, sh = d.shipCNY || 0; c.push(gg, gg - dc, gg + sh, gg - dc + sh); }
+    (d.itemPrices || []).forEach((v) => c.push(v));
+    (d.items || []).forEach((it) => { if (it.price != null) c.push(it.price, it.price * (it.qty || 1)); });
+  });
+  return c;
+}
+/* 收據對應哪幾行貨品：手動配對優先，否則按訂單自動配對 */
+function receiptRows(img, o, subs) {
+  const ids = S.rows.filter((r) => r.orderId === o.id);
+  if (img.rowIds && img.rowIds.length) return img.rowIds.filter((id) => ids.some((r) => r.id === id));
+  const k = receiptSub(subs || tbGroups(o.taobao.map((id) => S.images.get(id)).filter(Boolean)), img);
+  return k ? ids.filter((r) => r.subKey === k).map((r) => r.id) : [];
+}
+function receiptSub(subs, r) {
+  if (r.subKey && subs.some((s) => s.key === r.subKey)) return r.subKey;
+  const no = r.data.orderNo; if (no && subs.some((s) => s.no === no)) return no;
+  const v = r.data.cny;
+  if (v != null) { const hits = subs.filter((s) => subCands(s).some((c) => Math.abs(c - v) <= 0.05)); if (hits.length === 1) return hits[0].key; }
+  if (subs.length === 1) return subs[0].key;
+  return null;
 }
 /* 一次 PPS 付款可能包含幾張同時結帳的淘寶訂單：用金額組合找出來併在一起 */
 function reconcile() {
@@ -515,30 +579,64 @@ function cleanupOrders() {
 /* ================= 表格行 ================= */
 function newRow(orderId, name) {
   const d = S.settings.defaults;
-  return { id: uid('r'), orderId, name: name || '', edited: false, reason: d.reason, consumable: d.consumable, location: d.location, dept: d.dept, subgroup: d.subgroup, category: d.category, grant: d.grant, person: d.person, rdate: d.rdate };
+  return { id: uid('r'), orderId, name: name || '', edited: false, hkd: null, hkdEdited: false, subKey: null, titles: [], reason: d.reason, consumable: d.consumable, location: d.location, dept: d.dept, subgroup: d.subgroup, category: d.category, grant: d.grant, person: d.person, rdate: d.rdate };
+}
+/* 把一張淘寶訂單的實付港幣分給各件貨品（按人民幣價錢比例） */
+function allocate(total, items) {
+  if (items.length <= 1) return [{ v: total, est: false }];
+  if (total == null) return items.map(() => ({ v: null, est: false }));
+  const w = items.map((it) => (it.price != null ? it.price * (it.qty || 1) : null));
+  if (w.some((x) => x == null) || !w.reduce((a, b) => a + b, 0)) return items.map((_, i) => ({ v: i === 0 ? total : 0, est: true }));
+  const W = w.reduce((a, b) => a + b, 0); let acc = 0;
+  return items.map((_, i) => {
+    let v = i === items.length - 1 ? Math.round((total - acc) * 100) / 100 : Math.round(total * w[i] / W * 100) / 100;
+    acc += v; return { v, est: true };
+  });
+}
+function rowSpecs(o) {
+  const info = orderInfo(o), specs = [];
+  if (!info.subs.length) { specs.push({ key: 'pps#0', subKey: null, titles: info.titles, hkd: info.hkd, est: false }); return specs; }
+  info.subs.forEach((g) => {
+    const items = g.items.length ? g.items.map((it) => ({ titles: [it.title], price: it.price, qty: it.qty })) : [{ titles: g.titles }];
+    const al = allocate(g.hkd, items);
+    items.forEach((it, i) => specs.push({ key: `${g.key}#${i}`, subKey: g.key, titles: it.titles, hkd: al[i].v, est: al[i].est }));
+  });
+  if (specs.length === 1) {
+    if (info.pps?.data.remark) specs[0].titles = [...specs[0].titles, info.pps.data.remark];
+    if (specs[0].hkd == null) specs[0].hkd = info.hkd;
+  }
+  return specs;
 }
 function syncRows() {
   S.rows = S.rows.filter((r) => S.orders.some((o) => o.id === r.orderId));
-  for (const o of S.orders) {
-    const info = orderInfo(o);
-    const groups = info.subs.length > 1 ? info.subs.map((g) => ({ key: g.key, titles: g.titles }))
-      : [{ key: 'main', titles: info.titles }];
-    const rs = S.rows.filter((r) => r.orderId === o.id);
-    // 移除已不存在的自動行
-    S.rows = S.rows.filter((r) => r.orderId !== o.id || r.edited || !r.auto || groups.some((g) => g.key === r.autoKey) || (groups.length === 1 && rs.filter((x) => x.auto).indexOf(r) === 0));
-    groups.forEach((g) => {
-      const sug = suggestName(g.titles);
-      let r = S.rows.find((x) => x.orderId === o.id && x.auto && x.autoKey === g.key);
-      if (!r && groups.length === 1) r = S.rows.find((x) => x.orderId === o.id && x.auto);
-      if (!r && !groups.length) return;
-      if (!r) { if (groups.length === 1 && S.rows.some((x) => x.orderId === o.id)) return; r = newRow(o.id, sug); r.auto = true; S.rows.push(r); }
-      r.autoKey = g.key;
-      if (!r.edited) r.name = sug;
+  const order = new Map();
+  S.orders.forEach((o, oi) => {
+    const specs = rowSpecs(o), keys = new Set(specs.map((s) => s.key));
+    S.rows = S.rows.filter((r) => r.orderId !== o.id || !r.auto || keys.has(r.autoKey) || r.edited);
+    specs.forEach((sp, si) => {
+      if (S.deleted.has(`${o.id}|${sp.key}`)) return;
+      let r = S.rows.find((x) => x.orderId === o.id && x.auto && x.autoKey === sp.key);
+      if (!r) { r = newRow(o.id, ''); r.auto = true; r.autoKey = sp.key; S.rows.push(r); }
+      r.subKey = sp.subKey; r.titles = sp.titles;
+      if (!r.edited) r.name = suggestName(sp.titles);
+      if (!r.hkdEdited) { r.hkd = sp.hkd; r.est = sp.est; }
+      order.set(r.id, oi * 1000 + si);
     });
-  }
-  const idx = (id) => S.orders.findIndex((o) => o.id === id);
-  S.rows = S.rows.map((r, i) => [r, i]).sort((a, b) => idx(a[0].orderId) - idx(b[0].orderId) || a[1] - b[1]).map((x) => x[0]);
+    // 手動加的行跟在它的上一行後面
+    let pending = S.rows.filter((r) => r.orderId === o.id && !order.has(r.id)), guard = 0;
+    while (pending.length && guard++ < 50) {
+      pending = pending.filter((r) => {
+        if (r.after && S.rows.some((x) => x.id === r.after) && !order.has(r.after)) return true;
+        const base = r.after && order.has(r.after) ? order.get(r.after) : oi * 1000 + 900;
+        let v = base + 0.5; const used = new Set(order.values()); while (used.has(v)) v += 0.01;
+        order.set(r.id, v); return false;
+      });
+    }
+    pending.forEach((r) => order.set(r.id, oi * 1000 + 950));
+  });
+  S.rows.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
 }
+const rowSub = (r) => { const o = S.orders.find((x) => x.id === r.orderId); return o && r.subKey ? orderInfo(o).subs.find((s) => s.key === r.subKey) : null; };
 
 /* ================= 介面：訂單 ================= */
 const KIND_LABEL = { taobao: '淘寶訂單', pps: 'PPS 紀錄', receipt: '收據' };
@@ -552,45 +650,54 @@ function updateThumbState(img) {
   document.querySelectorAll(`[data-state="${img.id}"]`).forEach((el) => { el.innerHTML = stateChip(img); });
 }
 function moveOptions(img) {
-  const opts = S.orders.map((o, i) => `<option value="${o.id}" ${img.orderId === o.id ? 'selected' : ''}>放入訂單 ${i + 1}</option>`).join('');
-  return `<select data-move="${img.id}" aria-label="移到其他訂單">${img.orderId ? '' : '<option value="" selected>放入訂單…</option>'}${opts}<option value="new">放入新訂單</option>${img.orderId ? '<option value="tray">移出訂單</option>' : ''}<option value="del">刪除這張圖</option></select>`;
+  const opts = S.orders.map((o, i) => `<option value="${o.id}" ${img.orderId === o.id ? 'selected' : ''}>放入購物 ${i + 1}</option>`).join('');
+  return `<select data-move="${img.id}" aria-label="移到其他購物">${img.orderId ? '' : '<option value="" selected>放入購物…</option>'}${opts}<option value="new">放入新的購物</option>${img.orderId ? '<option value="tray">移出</option>' : ''}<option value="del">刪除這張圖</option></select>`;
 }
-function thumbHTML(img) {
+function subOptions(img, info) {
+  if (img.kind !== 'receipt' || !img.orderId || info.subs.length < 2) return '';
+  const cur = receiptSub(info.subs, img);
+  return `<select data-sub="${img.id}" aria-label="對應哪張淘寶訂單"><option value="" ${cur ? '' : 'selected'}>對應訂單…</option>${info.subs.map((g, i) => `<option value="${esc(g.key)}" ${cur === g.key ? 'selected' : ''}>對應訂單 ${String.fromCharCode(65 + i)}</option>`).join('')}</select>`;
+}
+function thumbHTML(img, info) {
   const k = img.kind || 'receipt';
   return `<div class="thumb"><div class="th"><select data-kind="${img.id}" class="k-${k}" aria-label="圖片類別">
-      ${['taobao', 'pps', 'receipt'].map((x) => `<option value="${x}" ${x === k ? 'selected' : ''}>${KIND_LABEL[x]}</option>`).join('')}</select></div>
+      ${['taobao', 'pps', 'receipt'].map((x) => `<option value="${x}" ${x === k ? 'selected' : ''}>${KIND_LABEL[x]}</option>`).join('')}</select>${img.fromExt ? '<span class="chip ok" title="由擴充功能截取，資料直接讀自淘寶頁面">已讀取</span>' : ''}</div>
     <div class="img"><img alt="${esc(KIND_LABEL[k])}：${esc(img.name)}" src="${thumbURL(img)}"><span class="state" data-state="${img.id}">${stateChip(img)}</span></div>
     <div class="tb"><button class="btn small" type="button" data-act="crop" data-img="${img.id}">裁剪</button>${moveOptions(img)}</div></div>`;
 }
 function renderOrders() {
   const box = $('#orders');
-  if (!S.orders.length) { box.innerHTML = '<div class="empty-state">未有訂單。上載截圖後，每張淘寶訂單會在這裏自動建立一張卡片。</div>'; }
+  if (!S.orders.length) { box.innerHTML = '<div class="empty-state">未有購物紀錄。上載截圖後，每次 PPS 付款會在這裏自動建立一張卡片。</div>'; }
   else box.innerHTML = S.orders.map((o, i) => {
     const info = orderInfo(o);
     const chips = info.busy ? '<span class="chip busy">辨識中</span>' : (info.issues.length ? info.issues.map(([c, t]) => `<span class="chip ${c}">${esc(t)}</span>`).join('') : (info.hkdPPS != null && info.hkdTB != null ? '<span class="chip ok">文件齊全・金額相符</span>' : '<span class="chip ok">文件齊全</span>'));
-    const slots = [];
-    info.tb.forEach((x) => slots.push(thumbHTML(x)));
-    if (!info.tb.length) slots.push(emptySlot(o.id, 'taobao'));
-    slots.push(info.pps ? thumbHTML(info.pps) : emptySlot(o.id, 'pps'));
-    info.rc.forEach((x) => slots.push(thumbHTML(x)));
-    slots.push(emptySlot(o.id, info.rc.length ? 'receipt+' : 'receipt'));
+    const nItems = S.rows.filter((r) => r.orderId === o.id).length, nForms = Math.ceil(nItems / 4);
+    const subsHTML = info.subs.map((g, k) => {
+      const letter = info.subs.length > 1 ? `訂單 ${String.fromCharCode(65 + k)}` : '淘寶訂單';
+      const items = S.rows.filter((r) => r.orderId === o.id && r.subKey === g.key).length;
+      return `<div class="sord"><div class="sord-h"><b>${letter}</b><span class="mono">${esc(g.no || '未讀到編號')}</span><span class="mono">${g.hkd != null ? 'HK$' + money(g.hkd) : ''}</span><span>${items} 件貨品</span></div>
+        <div class="slots">${g.imgs.map((x) => thumbHTML(x, info)).join('')}</div></div>`;
+    }).join('');
+    const loose = `<div class="sord rc"><div class="sord-h"><b>收據／發票</b><span>${info.rc.length} 張・在下面「收據配對」對應貨品</span></div>
+        <div class="slots">${info.rc.map((x) => thumbHTML(x, info)).join('')}${emptySlot(o.id, info.rc.length ? 'receipt+' : 'receipt')}</div></div>`;
     return `<article class="order" data-order="${o.id}">
-      <div class="order-h"><span class="title">訂單 ${i + 1}</span><span class="amt">${info.hkd != null ? 'HK$' + money(info.hkd) : 'HK$ —'}</span><span class="grow"></span>${chips}</div>
-      <div class="order-meta"><span>訂單編號 <span class="mono">${esc(info.orderNo || '—')}</span></span><span>日期 <span class="mono">${esc(info.date || '—')}</span></span>${info.shop ? `<span>店舖 ${esc(toHK(info.shop))}</span>` : ''}</div>
-      <div class="slots">${slots.join('')}</div>
-      <div class="order-foot"><label>報銷金額 HK$ <input inputmode="decimal" data-hkd="${o.id}" value="${info.hkd != null ? money(info.hkd) : ''}" aria-label="報銷金額"></label>
-        <span class="sub" style="color:var(--muted);font-size:12.5px">${info.hkdPPS != null ? `PPS 付款 HK$${money(info.hkdPPS)}（已包手續費）` : '以 PPS 實際付款金額為準'}</span>
-        <span style="flex:1"></span><button class="btn small ghost danger" type="button" data-act="del-order" data-order="${o.id}">刪除這張訂單</button></div>
+      <div class="order-h"><span class="title">購物 ${i + 1}</span><span class="amt">${info.hkd != null ? 'HK$' + money(info.hkd) : 'HK$ —'}</span><span class="grow"></span>${chips}</div>
+      <div class="order-meta"><span>日期 <span class="mono">${esc(info.date || '—')}</span></span><span>${info.subs.length} 張淘寶訂單・${nItems} 件貨品・${nForms} 張申請表</span>${info.shop ? `<span>店舖 ${esc(toHK(info.shop))}</span>` : ''}</div>
+      <div class="pps-row"><div class="slots">${info.pps ? thumbHTML(info.pps, info) : emptySlot(o.id, 'pps')}${info.subs.length ? '' : emptySlot(o.id, 'taobao')}</div></div>
+      ${subsHTML}${loose}
+      <div class="order-foot"><label>PPS 付款 HK$ <input inputmode="decimal" data-hkd="${o.id}" value="${info.hkdPPS != null ? money(info.hkdPPS) : ''}" aria-label="PPS 付款金額"></label>
+        <span class="sub-note">${info.subs.length ? `淘寶實付合計 HK$${money(info.hkdTB ?? 0)}` : ''}</span>
+        <span style="flex:1"></span><button class="btn small" type="button" data-act="add-file" data-order="${o.id}" data-kind="taobao">再加淘寶訂單</button><button class="btn small ghost danger" type="button" data-act="del-order" data-order="${o.id}">刪除</button></div>
     </article>`;
   }).join('');
   const tray = [...S.images.values()].filter((x) => !x.orderId);
   $('#tray').hidden = !tray.length;
-  $('#trayList').innerHTML = tray.map(thumbHTML).join('');
+  $('#trayList').innerHTML = tray.map((x) => thumbHTML(x, null)).join('');
 }
-function emptySlot(orderId, kind) {
+function emptySlot(orderId, kind, subKey) {
   const k = kind.replace('+', '');
   const label = kind === 'receipt+' ? '再加一張收據' : `加入${KIND_LABEL[k]}`;
-  return `<div class="slot-empty"><span class="tag k-${k}">${KIND_LABEL[k]}</span><button class="btn small" type="button" data-act="add-file" data-order="${orderId}" data-kind="${k}">${label}</button></div>`;
+  return `<div class="slot-empty"><span class="tag k-${k}">${KIND_LABEL[k]}</span><button class="btn small" type="button" data-act="add-file" data-order="${orderId}" data-kind="${k}" ${subKey ? `data-sub="${esc(subKey)}"` : ''}>${label}</button></div>`;
 }
 
 /* ================= 介面：表格行 ================= */
@@ -606,42 +713,95 @@ function renderShared() {
   $('#sharedFields').innerHTML = FIELDS.map((f) => fieldInput(f, d[f.k], `data-shared="${f.k}"`)).join('') +
     `<label class="check"><input type="checkbox" data-shared="consumable" ${d.consumable ? 'checked' : ''}> 消耗品</label>`;
 }
-function rowTitles(r) {
-  const o = S.orders.find((x) => x.id === r.orderId); if (!o) return [];
-  const info = orderInfo(o);
-  if (info.subs.length > 1 && r.autoKey) { const g = info.subs.find((s) => s.key === r.autoKey); if (g) return g.titles; }
-  return info.titles;
-}
+function rowTitles(r) { return r.titles || []; }
 function rowSummary(r) {
   const v = FIELDS.map((f) => r[f.k]).filter(Boolean);
   if (r.consumable) v.push('消耗品');
   return v.length ? v.join('・') : '未填';
 }
+function rowHTML(r) {
+  const oi = S.orders.findIndex((o) => o.id === r.orderId), o = S.orders[oi], info = o ? orderInfo(o) : null;
+  const titles = rowTitles(r), busy = info && info.busy && !r.name;
+  const si = info ? info.subs.findIndex((s) => s.key === r.subKey) : -1;
+  const ref = `購物 ${oi + 1}${info && info.subs.length > 1 && si >= 0 ? `・訂單 ${String.fromCharCode(65 + si)}` : ''}`;
+  return `<div class="row" data-row="${r.id}">
+    <div class="row-top"><div class="ordref">${ref}</div>
+      <label class="field"><span>貨品名稱</span><input data-f="name" value="${esc(r.name)}" placeholder="${busy ? '辨識中…' : '輸入貨品名稱'}" autocomplete="off"></label>
+      <label class="field amt-f"><span>金額 HK$${r.est && !r.hkdEdited ? '（按比例估算）' : ''}</span><input data-f="hkd" inputmode="decimal" value="${r.hkd != null ? money(r.hkd) : ''}" autocomplete="off"></label>
+      <div class="row-btns"><button class="btn small" type="button" data-act="add-row" title="在下面加一行">＋一行</button><button class="btn small ghost danger" type="button" data-act="del-row" aria-label="刪除這行">刪除</button></div></div>
+    ${titles.length ? `<div class="row-src">原標題：${titles.slice(0, 4).map((t, i) => `<button type="button" data-act="use-title" data-t="${i}" title="用這個標題（精簡後）">${esc(toHK(t).slice(0, 40))}${t.length > 40 ? '…' : ''}</button>`).join('')} ${r.edited ? '<button type="button" data-act="remember">記住這個名稱</button>' : ''}</div>` : ''}
+    <div class="rule-host"></div>
+    <details class="more" ${S.openRows.has(r.id) ? 'open' : ''}><summary>其他欄位：<span data-sum>${esc(rowSummary(r))}</span></summary>
+    <div class="fgrid">${FIELDS.map((f) => fieldInput(f, r[f.k], `data-f="${f.k}"`)).join('')}
+      <label class="check"><input type="checkbox" data-f="consumable" ${r.consumable ? 'checked' : ''}> 消耗品</label></div></details>
+  </div>`;
+}
 function renderRows() {
   const box = $('#rows');
-  if (!S.rows.length) { box.innerHTML = '<div class="empty-state">訂單建立後，貨品會列在這裏。</div>'; return; }
-  box.innerHTML = S.rows.map((r) => {
-    const oi = S.orders.findIndex((o) => o.id === r.orderId), o = S.orders[oi], info = o ? orderInfo(o) : null;
-    const titles = rowTitles(r);
-    const busy = info && info.busy && !r.name;
-    return `<div class="row" data-row="${r.id}">
-      <div class="row-top"><div class="ordref">訂單 ${oi + 1}<b>${info && info.hkd != null ? 'HK$' + money(info.hkd) : ''}</b></div>
-        <label class="field"><span>貨品名稱</span><input data-f="name" value="${esc(r.name)}" placeholder="${busy ? '辨識中…' : '輸入貨品名稱'}" autocomplete="off"></label>
-        <div style="display:flex;gap:4px"><button class="btn small" type="button" data-act="add-row" title="同一張訂單再加一行">＋一行</button><button class="btn small ghost danger" type="button" data-act="del-row" aria-label="刪除這行">刪除</button></div></div>
-      ${titles.length ? `<div class="row-src">原標題：${titles.slice(0, 4).map((t, i) => `<button type="button" data-act="use-title" data-t="${i}" title="用這個標題（精簡後）">${esc(toHK(t).slice(0, 40))}${t.length > 40 ? '…' : ''}</button>`).join('')} ${r.edited ? '<button type="button" data-act="remember">記住這個名稱</button>' : ''}</div>` : ''}
-      <div class="rule-host"></div>
-      <details class="more" ${S.openRows.has(r.id) ? 'open' : ''}><summary>其他欄位：<span data-sum>${esc(rowSummary(r))}</span></summary>
-      <div class="fgrid">${FIELDS.map((f) => fieldInput(f, r[f.k], `data-f="${f.k}"`)).join('')}
-        <label class="check"><input type="checkbox" data-f="consumable" ${r.consumable ? 'checked' : ''}> 消耗品</label></div></details>
-    </div>`;
-  }).join('');
+  if (!S.rows.length) { box.innerHTML = '<div class="empty-state">建立購物紀錄後，貨品會列在這裏。</div>'; return; }
+  const forms = buildForms();
+  box.innerHTML = forms.map((f, i) => `<div class="form-group"><div class="form-h"><b>申請表 ${i + 1}</b><span>${f.rows.length} 件貨品</span><span class="mono" data-ftotal="${i}">${f.amountText}</span></div>${f.rows.map(rowHTML).join('')}</div>`).join('');
+}
+function updateTotals() {
+  buildForms().forEach((f, i) => { const el = document.querySelector(`[data-ftotal="${i}"]`); if (el) el.textContent = f.amountText; });
 }
 function renderGlobal() {
   const s = S.settings;
   $('#g_payee').value = s.payee; $('#g_applicant').value = s.applicant; $('#g_date').value = S.appDate; $('#g_group').value = s.group;
-  $('#pv_per').value = String(s.perPage); $('#pv_att').checked = s.attach; $('#pv_cap').checked = s.caption;
+  $('#pv_layout').value = s.layout || 'sets'; $('#pv_att').checked = s.attach; $('#pv_cap').checked = s.caption;
 }
-function renderAll() { renderOrders(); renderRows(); schedulePreview(); }
+function renderAll() { renderOrders(); renderMatch(); renderRows(); schedulePreview(); }
+
+/* ================= 收據配對 ================= */
+function allReceipts() { return [...S.images.values()].filter((x) => x.kind === 'receipt'); }
+function rcLabel(img) { return 'R' + (allReceipts().indexOf(img) + 1); }
+function rcWhere(img) {
+  const o = S.orders.find((x) => x.id === img.orderId);
+  if (!o) return { text: '未放入任何購物', cls: 'bad', rows: [] };
+  const rows = receiptRows(img, o);
+  const oi = S.orders.indexOf(o) + 1;
+  if (!rows.length) return { text: `購物 ${oi}・未對應貨品`, cls: 'warn', rows };
+  const names = rows.map((id) => S.rows.find((r) => r.id === id)?.name || '').filter(Boolean);
+  return { text: `購物 ${oi}・${names.length > 2 ? names.slice(0, 2).join('、') + ` 等 ${names.length} 件` : names.join('、')}${img.rowIds?.length ? '' : '（自動）'}`, cls: 'ok', rows };
+}
+function renderMatch() {
+  const box = $('#match'); if (!box) return;
+  const rcs = allReceipts();
+  $('#matchWrap').hidden = !rcs.length && !S.rows.length;
+  if (S.selRc && !S.images.has(S.selRc)) S.selRc = null;
+  const sel = S.selRc ? S.images.get(S.selRc) : null;
+  const pool = rcs.map((img) => { const w = rcWhere(img); return `<button type="button" class="rc-card ${S.selRc === img.id ? 'sel' : ''}" draggable="true" data-rc="${img.id}" aria-pressed="${S.selRc === img.id}">
+      <img src="${thumbURL(img)}" alt=""><span class="rc-l">${rcLabel(img)}</span><span class="rc-w ${w.cls}">${esc(w.text)}</span></button>`; }).join('') || '<div class="empty-state">未有收據。可以在上面的購物卡按「加入收據」。</div>';
+  const items = S.orders.map((o, oi) => {
+    const subs = orderInfo(o).subs, rows = S.rows.filter((r) => r.orderId === o.id); if (!rows.length) return '';
+    const rcs2 = o.receipts.map((id) => S.images.get(id)).filter(Boolean);
+    return `<div class="m-ord"><div class="m-ord-h">購物 ${oi + 1}</div>${rows.map((r) => {
+      const mine = rcs2.filter((x) => receiptRows(x, o, subs).includes(r.id));
+      const si = subs.findIndex((s) => s.key === r.subKey);
+      const add = sel && !mine.includes(sel) ? `<button type="button" class="btn small primary" data-addrc="${r.id}">＋ 配對 ${rcLabel(sel)}</button>` : '';
+      return `<div class="m-row ${mine.length ? '' : 'none'}" data-mrow="${r.id}"><div class="m-name"><b>${esc(r.name || '（未命名）')}</b><span>${subs.length > 1 && si >= 0 ? `訂單 ${String.fromCharCode(65 + si)}・` : ''}${r.hkd != null ? 'HK$' + money(r.hkd) : ''}</span></div>
+        <div class="m-rcs">${mine.map((x) => `<span class="m-rc"><img src="${thumbURL(x)}" alt="${rcLabel(x)}" data-view="${x.id}"><b>${rcLabel(x)}</b><button type="button" data-unrc="${x.id}" data-row="${r.id}" aria-label="取消配對">×</button></span>`).join('') || '<span class="m-empty">未有收據</span>'}${add}</div></div>`;
+    }).join('')}</div>`;
+  }).join('');
+  box.innerHTML = `<div class="m-pool"><div class="m-h"><b>全部收據</b><span>${sel ? `已揀 ${rcLabel(sel)}：按右邊貨品的「＋ 配對」，或者把收據拖到貨品上。` : '揀一張收據，再揀它對應的貨品。一張收據可以配對多件貨品。'}</span>
+      ${sel ? `<span class="m-acts"><button type="button" class="btn small" data-view="${sel.id}">放大查看</button><button type="button" class="btn small" data-autorc="${sel.id}">改回自動</button><button type="button" class="btn small" data-clearrc="${sel.id}">清除配對</button></span>` : ''}</div>
+      <div class="rc-grid">${pool}</div></div>
+    <div class="m-items">${items || '<div class="empty-state">未有貨品。</div>'}</div>`;
+}
+function assignRc(img, rowId) {
+  const r = S.rows.find((x) => x.id === rowId); if (!img || !r) return;
+  const o = S.orders.find((x) => x.id === r.orderId);
+  if (img.orderId !== o.id) { const cur = img.orderId ? receiptRows(img, S.orders.find((x) => x.id === img.orderId)) : []; attach(img, o, 'receipt'); img.assignManual = true; img.rowIds = []; void cur; }
+  if (!img.rowIds || !img.rowIds.length) img.rowIds = receiptRows(img, o).filter((id) => S.rows.some((x) => x.id === id));
+  if (!img.rowIds.includes(rowId)) img.rowIds.push(rowId);
+  img.rowIds = img.rowIds.filter((id) => S.rows.some((x) => x.id === id && x.orderId === o.id));
+}
+function unassignRc(img, rowId) {
+  const o = S.orders.find((x) => x.id === img.orderId); if (!o) return;
+  const cur = receiptRows(img, o);
+  img.rowIds = cur.filter((id) => id !== rowId);
+  if (!img.rowIds.length) img.rowIds = ['none'];
+}
 
 /* ================= 裁剪 ================= */
 const crop = { img: null, rect: null, drag: null };
@@ -853,40 +1013,57 @@ function drawForm(pen, X, Y, form, g) {
 
 function buildForms() {
   const s = S.settings, forms = [];
-  const amountText = (v) => (v == null ? '$' : '$' + money(v));
-  if (!S.rows.length) return [{ rows: [], amountText: '$' }];
+  const mk = (rows) => {
+    const vals = rows.map((r) => r.hkd).filter((v) => v != null && !isNaN(v));
+    const amount = vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) * 100) / 100 : null;
+    return { rows, amount, amountText: amount == null ? '$' : '$' + money(amount), orderIds: [...new Set(rows.map((r) => r.orderId))] };
+  };
+  if (!S.rows.length) return [mk([])];
   if (s.group === 'order') {
-    S.orders.forEach((o) => {
-      const rs = S.rows.filter((r) => r.orderId === o.id), info = orderInfo(o);
-      for (let i = 0; i < rs.length; i += 4) forms.push({ rows: rs.slice(i, i + 4), amountText: i === 0 ? amountText(info.hkd) : '$（見上一張）' });
-    });
-  } else {
-    for (let i = 0; i < S.rows.length; i += 4) {
-      const chunk = S.rows.slice(i, i + 4);
-      const firstRows = new Set(); let sum = 0, any = false;
-      chunk.forEach((r) => { if (!firstRows.has(r.orderId) && S.rows.find((x) => x.orderId === r.orderId) === r) { firstRows.add(r.orderId); const h = orderInfo(S.orders.find((o) => o.id === r.orderId)).hkd; if (h != null) { sum += h; any = true; } } });
-      forms.push({ rows: chunk, amountText: any ? amountText(Math.round(sum * 100) / 100) : '$' });
-    }
-  }
+    S.orders.forEach((o) => { const rs = S.rows.filter((r) => r.orderId === o.id); for (let i = 0; i < rs.length; i += 4) forms.push(mk(rs.slice(i, i + 4))); });
+  } else for (let i = 0; i < S.rows.length; i += 4) forms.push(mk(S.rows.slice(i, i + 4)));
+  forms.forEach((f, i) => { f.no = i + 1; });
   return forms;
 }
-function buildPages() {
-  const s = S.settings, pages = [], forms = buildForms(), per = s.perPage;
-  for (let i = 0; i < forms.length; i += per) pages.push({ type: 'forms', forms: forms.slice(i, i + per) });
-  if (s.attach) S.orders.forEach((o, i) => {
+/* 一張申請表的附件：表內貨品的淘寶訂單和收據，PPS 紀錄放第一頁 */
+function chunkImgs(imgs, fixed) {
+  if (imgs.length <= 6) return [imgs];
+  const out = [imgs.slice(0, fixed + 3)]; for (let i = fixed + 3; i < imgs.length; i += 4) out.push(imgs.slice(i, i + 4)); return out;
+}
+function formAttachments(f, forms) {
+  const pages = [];
+  f.orderIds.forEach((oid) => {
+    const o = S.orders.find((x) => x.id === oid); if (!o) return;
     const info = orderInfo(o);
-    if (!(info.tb.length || info.pps || info.rc.length)) return;
-    if (info.subs.length <= 1) { pages.push({ type: 'att', order: o, idx: i, imgs: [...info.tb, ...info.rc, info.pps].filter(Boolean) }); return; }
-    // 合併付款：每張淘寶訂單一頁（連對應收據），PPS 放第一頁
-    const parts = info.subs.map((g) => ({ g, rc: [] })), left = [];
-    info.rc.forEach((r) => {
-      const v = r.data.cny, no = r.data.orderNo;
-      const p = parts.find((pt) => (no && pt.g.key === no) || (v != null && pt.g.imgs.some((x) => { const d = x.data; return [d.goodsCNY, d.goodsCNY - (d.discountCNY || 0), d.goodsCNY - (d.discountCNY || 0) + (d.shipCNY || 0), ...(d.itemPrices || [])].some((c) => c != null && Math.abs(c - v) <= 0.05); })));
-      if (p) p.rc.push(r); else left.push(r);
+    const fRows = f.rows.filter((r) => r.orderId === oid), rowSet = new Set(fRows.map((r) => r.id));
+    const sharedBy = forms.filter((x) => x.orderIds.includes(oid)).map((x) => x.no);
+    const firstForm = sharedBy[0] === f.no;
+    const rcs = info.rc.map((img) => ({ img, rows: receiptRows(img, o, info.subs) }));
+    const groups = [];
+    [...new Set(fRows.map((r) => r.subKey))].forEach((k) => { const g = info.subs.find((s) => s.key === k); if (g) groups.push({ g, imgs: [...g.imgs], fixed: g.imgs.length }); });
+    if (!groups.length) groups.push({ g: null, imgs: [...info.tb], fixed: info.tb.length });
+    rcs.forEach((x) => {
+      const hit = x.rows.find((id) => rowSet.has(id));
+      if (hit) { const r = S.rows.find((rr) => rr.id === hit); (groups.find((gr) => gr.g && gr.g.key === r.subKey) || groups[groups.length - 1]).imgs.push(x.img); }
+      else if (!x.rows.length && firstForm) groups[groups.length - 1].imgs.push(x.img);
     });
-    parts.forEach((pt, k) => pages.push({ type: 'att', order: o, idx: i, part: k + 1, parts: parts.length, sub: pt.g,
-      imgs: [...pt.g.imgs, ...pt.rc, ...(k === parts.length - 1 ? left : []), ...(k === 0 && info.pps ? [info.pps] : [])] }));
+    groups.forEach((gr, k) => {
+      const imgs = [...gr.imgs];
+      if (k === 0 && info.pps) imgs.push(info.pps);
+      chunkImgs(imgs, gr.fixed).forEach((part) => pages.push({ type: 'att', order: o, info, sub: gr.g, imgs: part, formNo: f.no, sharedBy }));
+    });
   });
+  pages.forEach((p, i) => { p.part = i + 1; p.parts = pages.length; });
+  return pages;
+}
+function buildPages() {
+  const s = S.settings, pages = [], forms = buildForms();
+  if (s.layout === 'compact') {
+    for (let i = 0; i < forms.length; i += 2) pages.push({ type: 'forms', forms: forms.slice(i, i + 2) });
+    if (s.attach) forms.forEach((f) => pages.push(...formAttachments(f, forms)));
+  } else {
+    forms.forEach((f) => { pages.push({ type: 'forms', forms: [f] }); if (s.attach) pages.push(...formAttachments(f, forms)); });
+  }
   return pages;
 }
 function packImages(items, W, H, gap) {
@@ -913,12 +1090,13 @@ function packImages(items, W, H, gap) {
   return out;
 }
 function drawAttachment(pen, page) {
-  const o = page.order, info = orderInfo(o), s = S.settings;
+  const info = page.info, s = S.settings;
   const M = 10, W = A4.w - M * 2;
   let top = M;
   if (s.caption) {
-    const no = page.sub ? (page.sub.imgs[0].data.orderNo || '') : info.orderNo;
-    const parts = [`附件 ${page.idx + 1}${page.parts ? `（${page.part}/${page.parts}）` : ''}`, no ? `淘寶訂單編號 ${no}` : '淘寶訂單', info.date ? `交易日期 ${info.date}` : '', info.hkd != null ? `PPS 付款 HK$${money(info.hkd)}${page.parts ? `（${page.parts} 張訂單合併付款）` : ''}` : ''].filter(Boolean);
+    const no = page.sub ? page.sub.no : info.orderNo;
+    const parts = [`申請表 ${page.formNo} 附件 ${page.part}/${page.parts}`, no ? `淘寶訂單編號 ${no}` : '', page.sub && page.sub.hkd != null ? `淘寶實付 HK$${money(page.sub.hkd)}` : '',
+      info.hkdPPS != null ? `PPS 付款 HK$${money(info.hkdPPS)}${page.sharedBy.length > 1 ? `（申請表 ${page.sharedBy.join('、')} 共用）` : ''}` : '', info.date ? `日期 ${info.date}` : ''].filter(Boolean);
     const cap = parts.join('　｜　'); let cs = 3.3;
     while (cs > 2.3 && pen.measure(cap, cs, { family: SANS }) > W) cs -= 0.1;
     pen.text(cap, M, M + 3.6, cs, { family: SANS });
@@ -935,7 +1113,7 @@ function drawAttachment(pen, page) {
     ctx.drawImage(items[b.i].c, P(M + b.x), P(top + b.y), P(b.w), P(b.h));
     ctx.strokeStyle = '#b8b8b8'; ctx.lineWidth = Math.max(1, P(0.15)); ctx.strokeRect(P(M + b.x), P(top + b.y), P(b.w), P(b.h));
   });
-  if (!imgs.length) pen.text('（這張訂單未有圖片）', A4.w / 2, 60, 4, { align: 'center', family: SANS, color: '#888' });
+  if (!imgs.length) pen.text('（未有圖片）', A4.w / 2, 60, 4, { align: 'center', family: SANS, color: '#888' });
 }
 function renderPage(page, s) {
   const c = document.createElement('canvas'); c.width = Math.round(A4.w * s); c.height = Math.round(A4.h * s);
@@ -943,8 +1121,8 @@ function renderPage(page, s) {
   const pen = makePen(ctx, s);
   const g = { payee: S.settings.payee, applicant: S.settings.applicant, date: S.appDate };
   if (page.type === 'forms') {
-    if (S.settings.perPage === 2) page.forms.forEach((f, i) => drawForm(pen, 10, 6 + i * 148.5, f, g));
-    else drawForm(pen, 10, 12, page.forms[0], g);
+    if (S.settings.layout === 'compact') page.forms.forEach((f, i) => drawForm(pen, 10, 6 + i * 148.5, f, g));
+    else drawForm(pen, 10, 10, page.forms[0], g);
   } else drawAttachment(pen, page);
   return c;
 }
@@ -965,13 +1143,13 @@ async function renderPreview() {
   if (tok !== pvToken) return;
   const box = $('#pages'); box.innerHTML = '';
   const dpr = Math.min(2, window.devicePixelRatio || 1), s = 2.4 * dpr;
-  const nf = pages.filter((p) => p.type === 'forms').length, na = pages.length - nf;
-  $('#pvSummary').textContent = `共 ${pages.length} 頁 A4：表格 ${nf} 頁${na ? `、附件 ${na} 頁` : ''}。按頁面可以放大。`;
+  const nf = buildForms().filter((f) => f.rows.length).length, na = pages.filter((p) => p.type === 'att').length;
+  $('#pvSummary').textContent = `共 ${pages.length} 頁 A4：申請表 ${nf} 張${na ? `、附件 ${na} 頁` : ''}。按頁面可以放大。`;
   pages.forEach((p, i) => {
     const wrap = document.createElement('div'); wrap.className = 'page';
     const c = renderPage(p, s); c.setAttribute('role', 'img'); c.setAttribute('aria-label', `第 ${i + 1} 頁`); c.tabIndex = 0;
     c.addEventListener('click', () => openPage(i)); c.addEventListener('keydown', (e) => { if (e.key === 'Enter') openPage(i); });
-    const lab = document.createElement('span'); lab.textContent = `第 ${i + 1} 頁・${p.type === 'forms' ? '購物記錄表' : `附件（訂單 ${p.idx + 1}${p.parts ? ` 之 ${p.part}` : ''}）`}`;
+    const lab = document.createElement('span'); lab.textContent = `第 ${i + 1} 頁・${p.type === 'forms' ? `申請表 ${p.forms.map((f) => f.no).join('、')}` : `申請表 ${p.formNo} 附件 ${p.part}/${p.parts}`}`;
     wrap.append(c, lab); box.appendChild(wrap);
   });
 }
@@ -1145,7 +1323,7 @@ function bind() {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const act = b.dataset.act;
     if (act === 'crop') openCrop(S.images.get(b.dataset.img));
-    if (act === 'add-file') { one._target = { orderId: b.dataset.order, kind: b.dataset.kind }; one.click(); }
+    if (act === 'add-file') { one._target = { orderId: b.dataset.order, kind: b.dataset.kind, subKey: b.dataset.sub || null }; one.click(); }
     if (act === 'del-order') {
       const o = S.orders.find((x) => x.id === b.dataset.order); if (!o) return;
       [...o.taobao, o.pps, ...o.receipts].filter(Boolean).forEach((id) => { const im = S.images.get(id); if (im) { im.orderId = null; im.assignManual = true; } });
@@ -1158,8 +1336,12 @@ function bind() {
       const img = S.images.get(t.dataset.move), v = t.value; if (!img || !v) return;
       if (v === 'del') { detach(img); S.images.delete(img.id); S.ocr.queue = S.ocr.queue.filter((q) => q !== img.id); }
       else if (v === 'tray') { detach(img); img.assignManual = true; }
-      else { const o = v === 'new' ? newOrder(true) : S.orders.find((x) => x.id === v); if (o) { img.assignManual = true; attach(img, o, img.kind || 'receipt'); } }
+      else { const o = v === 'new' ? newOrder(true) : S.orders.find((x) => x.id === v); if (o) { img.assignManual = true; img.subKey = null; img.rowIds = []; attach(img, o, img.kind || 'receipt'); } }
       cleanupOrders(); syncRows(); renderAll();
+    }
+    if (t.dataset.sub) {
+      const img = S.images.get(t.dataset.sub); if (!img) return;
+      img.subKey = t.value || null; syncRows(); renderAll(); return;
     }
     if (t.dataset.kind) {
       const img = S.images.get(t.dataset.kind); if (!img) return;
@@ -1175,15 +1357,39 @@ function bind() {
   };
   ['#orders', '#trayList'].forEach((sel) => { $(sel).addEventListener('click', handleOrdersClick); $(sel).addEventListener('change', handleOrdersChange); });
 
+  // 收據配對
+  const mb = $('#match');
+  mb.addEventListener('click', (e) => {
+    const t = e.target.closest('[data-rc],[data-addrc],[data-unrc],[data-view],[data-autorc],[data-clearrc]'); if (!t) return;
+    if (t.dataset.view) { openCrop(S.images.get(t.dataset.view)); return; }
+    if (t.dataset.rc) { S.selRc = S.selRc === t.dataset.rc ? null : t.dataset.rc; renderMatch(); return; }
+    if (t.dataset.addrc) { assignRc(S.images.get(S.selRc), t.dataset.addrc); }
+    if (t.dataset.unrc) { unassignRc(S.images.get(t.dataset.unrc), t.dataset.row); }
+    if (t.dataset.autorc) { const img = S.images.get(t.dataset.autorc); img.rowIds = []; }
+    if (t.dataset.clearrc) { const img = S.images.get(t.dataset.clearrc); img.rowIds = ['none']; }
+    renderOrders(); renderMatch(); schedulePreview();
+  });
+  mb.addEventListener('dragstart', (e) => { const c = e.target.closest('[data-rc]'); if (c) { e.dataTransfer.setData('text/plain', c.dataset.rc); e.dataTransfer.effectAllowed = 'link'; } });
+  mb.addEventListener('dragover', (e) => { const r = e.target.closest('[data-mrow]'); if (r) { e.preventDefault(); r.classList.add('over'); } });
+  mb.addEventListener('dragleave', (e) => { const r = e.target.closest('[data-mrow]'); if (r) r.classList.remove('over'); });
+  mb.addEventListener('drop', (e) => {
+    const r = e.target.closest('[data-mrow]'); if (!r) return; e.preventDefault(); r.classList.remove('over');
+    const img = S.images.get(e.dataTransfer.getData('text/plain')); if (!img) return;
+    assignRc(img, r.dataset.mrow); renderOrders(); renderMatch(); schedulePreview();
+  });
+
   // 表格行
   const rowsBox = $('#rows');
   rowsBox.addEventListener('input', (e) => {
     const t = e.target, rowEl = t.closest('[data-row]'); if (!rowEl || !t.dataset.f) return;
     const r = S.rows.find((x) => x.id === rowEl.dataset.row); if (!r) return;
-    if (t.type === 'checkbox') r[t.dataset.f] = t.checked; else r[t.dataset.f] = t.value;
+    if (t.type === 'checkbox') r[t.dataset.f] = t.checked;
+    else if (t.dataset.f === 'hkd') { const v = parseFloat(t.value.replace(/[^\d.]/g, '')); r.hkd = isNaN(v) ? null : Math.round(v * 100) / 100; r.hkdEdited = true; updateTotals(); }
+    else r[t.dataset.f] = t.value;
     if (t.dataset.f === 'name') { r.edited = true; } else { const sm = rowEl.querySelector('[data-sum]'); if (sm) sm.textContent = rowSummary(r); }
     schedulePreview();
   });
+  rowsBox.addEventListener('focusout', (e) => { if (e.target.dataset?.f === 'name' || e.target.dataset?.f === 'hkd') renderMatch(); });
   rowsBox.addEventListener('change', (e) => {
     const t = e.target, f = FIELDS.find((x) => x.k === t.dataset.f);
     if (f?.opt) rememberOption(f.opt, t.value);
@@ -1194,8 +1400,8 @@ function bind() {
     const b = e.target.closest('[data-act]'); if (!b) return;
     const rowEl = b.closest('[data-row]'), r = S.rows.find((x) => x.id === rowEl?.dataset.row); if (!r) return;
     const act = b.dataset.act;
-    if (act === 'add-row') { const nr = newRow(r.orderId, ''); const i = S.rows.indexOf(r); S.rows.splice(i + 1, 0, nr); renderRows(); schedulePreview(); rowsBox.querySelector(`[data-row="${nr.id}"] [data-f="name"]`)?.focus(); }
-    if (act === 'del-row') { S.rows = S.rows.filter((x) => x !== r); if (!S.rows.some((x) => x.orderId === r.orderId)) { const nr = newRow(r.orderId, ''); nr.edited = true; S.rows.push(nr); syncRows(); } renderRows(); schedulePreview(); }
+    if (act === 'add-row') { const nr = newRow(r.orderId, ''); nr.subKey = r.subKey; nr.after = r.id; nr.hkdEdited = true; nr.edited = true; const i = S.rows.indexOf(r); S.rows.splice(i + 1, 0, nr); renderRows(); schedulePreview(); rowsBox.querySelector(`[data-row="${nr.id}"] [data-f="name"]`)?.focus(); }
+    if (act === 'del-row') { allReceipts().forEach((x) => { if (x.rowIds) x.rowIds = x.rowIds.filter((id) => id !== r.id); }); if (r.auto) { r.hidden = true; } S.rows = S.rows.filter((x) => x !== r); S.deleted.add(r.autoKey ? `${r.orderId}|${r.autoKey}` : r.id); renderRows(); schedulePreview(); }
     if (act === 'use-title') { const o = S.orders.find((x) => x.id === r.orderId), t = rowTitles(r)[+b.dataset.t]; r.name = shorten(t); r.edited = true; renderRows(); schedulePreview(); }
     if (act === 'remember') {
       const host = rowEl.querySelector('.rule-host');
@@ -1225,8 +1431,8 @@ function bind() {
   const gmap = { g_payee: 'payee', g_applicant: 'applicant' };
   Object.entries(gmap).forEach(([id, k]) => $('#' + id).addEventListener('input', (e) => { S.settings[k] = e.target.value; saveSettings(); schedulePreview(); }));
   $('#g_date').addEventListener('input', (e) => { S.appDate = e.target.value; schedulePreview(); });
-  $('#g_group').addEventListener('change', (e) => { S.settings.group = e.target.value; saveSettings(); schedulePreview(); });
-  $('#pv_per').addEventListener('change', (e) => { S.settings.perPage = +e.target.value; saveSettings(); schedulePreview(); });
+  $('#g_group').addEventListener('change', (e) => { S.settings.group = e.target.value; saveSettings(); renderRows(); schedulePreview(); });
+  $('#pv_layout').addEventListener('change', (e) => { S.settings.layout = e.target.value; saveSettings(); schedulePreview(); });
   $('#pv_att').addEventListener('change', (e) => { S.settings.attach = e.target.checked; saveSettings(); schedulePreview(); });
   $('#pv_cap').addEventListener('change', (e) => { S.settings.caption = e.target.checked; saveSettings(); schedulePreview(); });
   $('#btnPDF').addEventListener('click', downloadPDF);
