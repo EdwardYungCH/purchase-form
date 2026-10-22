@@ -108,35 +108,42 @@ function pfData(limit) {
   out.shipCNY = ship; out.discountCNY = Math.round(disc * 100) / 100; out.feeHKD = fee;
   out.created = pick(/创建时间\s*[:：]?\s*(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2}:\d{2})?)/) || pick(/付款时间\s*[:：]?\s*(\d{4}-\d{2}-\d{2})/) || '';
 
-  // 商品：找標題連結，再向上找包含價錢和數量的一行
+  // 商品：先找數量（x6），再向上找包含價錢的一行，標題取該行內第一行長中文
+  const SERVICE = /HK可退|无理由|假一赔|极速退款|价保|申请售后|加入购物车|争议|判断依据|交易快照|运费险|退换|再买一单|查看物流/;
+  const cjk = (s) => (s.match(/[一-鿿]/g) || []).length;
   const top = (el) => el.getBoundingClientRect().top + window.scrollY;
-  const links = [...document.querySelectorAll('a[href]')].filter((a) => {
-    const t = (a.innerText || '').trim();
-    const r = a.getBoundingClientRect();
-    return r.width > 0 && t.length >= 6 && !/快照|查看|申请|购物车|物流|评价|联系|店铺|旺旺/.test(t) && top(a) < limit &&
-      /item\.taobao\.com|detail\.tmall\.com|item\.htm|tradeSnap|trade_snap|snapshot|detail\.m\.tmall/i.test(a.href);
-  });
+  const qtyEls = [];
+  { const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let n;
+    while ((n = w.nextNode())) { const t = n.nodeValue.trim(); if (/^[x×]\s*\d{1,4}$/.test(t)) { const el = n.parentElement; const r = el && el.getBoundingClientRect(); if (r && r.width > 0 && top(el) < limit) qtyEls.push(el); } } }
   const items = [];
-  links.forEach((a) => {
-    const title = a.innerText.trim().replace(/\s+/g, ' ');
-    if (items.some((it) => it.title === title)) return;
-    let c = a.parentElement, row = null;
-    for (let i = 0; i < 8 && c; i++, c = c.parentElement) {
-      const others = [...c.querySelectorAll('a[href]')].filter((x) => links.includes(x) && x.innerText.trim() !== a.innerText.trim());
-      if (others.length) break;
-      if (/[¥￥]\s*\d/.test(c.innerText) && /[x×]\s*\d+/.test(c.innerText)) { row = c; break; }
+  qtyEls.forEach((q) => {
+    let c = q, row = null;
+    for (let i = 0; i < 10 && c.parentElement; i++) {
+      c = c.parentElement;
+      const nq = qtyEls.filter((x) => c.contains(x)).length;
+      if (nq > 1) break;
+      const t = c.innerText || '';
+      if (/[¥￥]\s*[\d,]+\.\d{2}/.test(t) && t.split('\n').some((l) => cjk(l) >= 6 && !SERVICE.test(l) && !/[¥￥]/.test(l))) { row = c; break; }
     }
-    const it = { title, sku: '', price: null, qty: 1 };
-    if (row) {
-      const t = row.innerText;
-      const pm = t.match(/[¥￥]\s*([\d,]+\.\d{2})/); if (pm) it.price = num(pm[1]);
-      const qm = [...t.matchAll(/(?:^|\s)[x×]\s*(\d+)(?=\s|$)/g)].pop(); if (qm) it.qty = parseInt(qm[1], 10);
-      const ls = t.split('\n').map((s) => s.trim()).filter(Boolean);
-      const ti = ls.findIndex((s) => s.replace(/\s+/g, ' ') === title);
-      it.sku = ls.slice(ti + 1).filter((s) => !/[¥￥]|^[x×]\s*\d|价保|退|包邮|极速|无理由|申请|购物车|运费险|假一赔|到港|保障|发货/.test(s)).slice(0, 2).join(' ');
-    }
-    items.push(it);
+    if (!row) return;
+    const lines = row.innerText.split('\n').map((s) => s.trim()).filter(Boolean);
+    const ti = lines.findIndex((l) => cjk(l) >= 6 && !SERVICE.test(l) && !/[¥￥]/.test(l));
+    const title = lines[ti].replace(/\s+/g, ' ');
+    const sku = lines.slice(ti + 1).filter((l) => !SERVICE.test(l) && !/[¥￥]|^[x×]\s*\d/.test(l)).slice(0, 1).join(' ');
+    const pm = row.innerText.match(/[¥￥]\s*([\d,]+\.\d{2})/);
+    const it = { title, sku, price: pm ? num(pm[1]) : null, qty: parseInt(q.textContent.replace(/\D/g, ''), 10) || 1 };
+    if (!items.some((x) => x.title === it.title && x.sku === it.sku)) items.push(it);
   });
+  // 後備：用商品連結
+  if (!items.length) {
+    [...document.querySelectorAll('a[href]')].forEach((a) => {
+      const t = (a.innerText || '').trim().replace(/\s+/g, ' ');
+      const r = a.getBoundingClientRect();
+      if (r.width > 0 && cjk(t) >= 6 && !SERVICE.test(t) && top(a) < limit && /item\.taobao\.com|detail\.tmall\.com|item\.htm/i.test(a.href) && !items.some((x) => x.title === t))
+        items.push({ title: t, sku: '', price: null, qty: 1 });
+    });
+  }
+  const links = [];
   out.items = items;
   const shopA = [...document.querySelectorAll('a[href*="store.taobao.com"],a[href*="shop"],a[href*=".tmall.com/"]')].find((a) => (a.innerText || '').trim().length >= 2 && top(a) < limit && !links.includes(a));
   out.shop = shopA ? shopA.innerText.trim() : '';

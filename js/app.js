@@ -278,7 +278,11 @@ async function addFiles(files, target) {
         const meta = /png$/i.test(f.type) || /\.png$/i.test(f.name) ? await readPngMeta(f) : null;
         const base = await fileToCanvas(f);
         const img = newImage(f.name, base, target);
-        if (meta) { img.data = extData(meta); img.kind = 'taobao'; img.kindManual = true; img.status = 'done'; img.crop = { x: 0, y: 0, w: 1, h: 1 }; img.fromExt = true; autoAssign(img); }
+        if (meta) {
+          img.data = extData(meta); img.kind = 'taobao'; img.kindManual = true; img.crop = { x: 0, y: 0, w: 1, h: 1 }; img.fromExt = true;
+          if (img.data.titles.length) { img.status = 'done'; autoAssign(img); }
+          else { img.extMeta = img.data; autoAssign(img); enqueueOCR(img); } // 擴充功能讀不到商品名稱：用文字辨識補上
+        }
         else enqueueOCR(img);
       }
     } catch (e) { console.error(e); toast(`「${f.name}」讀取失敗：${e.message || e}`, 4000); }
@@ -309,8 +313,9 @@ async function readPngMeta(file) {
   } catch (e) { console.warn('png meta', e); }
   return null;
 }
+const JUNK_TITLE = /争议|爭議|判断依据|判斷依據|交易快照|查看|复制|申请售后|加入购物车/;
 function extData(m) {
-  const items = (m.items || []).filter((it) => it && it.title).map((it) => ({ title: it.title, sku: it.sku || '', price: it.price ?? null, qty: it.qty || 1 }));
+  const items = (m.items || []).filter((it) => it && it.title && !JUNK_TITLE.test(it.title)).map((it) => ({ title: it.title, sku: it.sku || '', price: it.price ?? null, qty: it.qty || 1 }));
   return { kind: 'taobao', fromExt: true, orderNo: m.orderNo || '', hkd: m.paidHKD ?? null, goodsCNY: m.goodsCNY ?? null, discountCNY: m.discountCNY || 0,
     shipCNY: m.shipCNY || 0, date: (m.created || '').slice(0, 10), shop: m.shop || '', titles: items.map((it) => it.title), items, itemPrices: items.map((it) => it.price).filter((v) => v != null) };
 }
@@ -423,7 +428,8 @@ async function runQueue() {
         c.getContext('2d').drawImage(o, 0, 0, c.width, c.height);
         const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
         const { data } = await w.recognize(blob, {}, { text: true, tsv: true, blocks: false, hocr: false });
-        const d = Parser.analyse(data.tsv || '', data.text || '', c.width, c.height);
+        let d = Parser.analyse(data.tsv || '', data.text || '', c.width, c.height);
+        if (img.extMeta) d = { ...img.extMeta, titles: d.kind === 'taobao' ? d.titles : [], crop: null };
         img.data = d; img.status = 'done';
         if (!img.kindManual) img.kind = d.kind;
         if (d.crop && (img.kind === 'pps' || img.kind === 'taobao')) img.crop = refineCrop(img.crop, d.crop);
