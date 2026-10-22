@@ -445,7 +445,7 @@ function orderInfo(o) {
   const date = pps?.data.date || tb.map((x) => x.data.date).find(Boolean) || '';
   const titles = [...tb.flatMap((x) => x.data.titles || []), pps?.data.remark].filter(Boolean);
   const cands = [];
-  tb.forEach((x) => { const d = x.data; if (d.goodsCNY != null) { cands.push(d.goodsCNY, d.goodsCNY - (d.discountCNY || 0)); } (d.itemPrices || []).forEach((p) => cands.push(p)); if ((d.itemPrices || []).length > 1) cands.push(d.itemPrices.reduce((a, b) => a + b, 0)); });
+  tb.forEach((x) => { const d = x.data; if (d.goodsCNY != null) { const g = d.goodsCNY, dc = d.discountCNY || 0, sh = d.shipCNY || 0; cands.push(g, g - dc, g + sh, g - dc + sh); } (d.itemPrices || []).forEach((p) => cands.push(p)); if ((d.itemPrices || []).length > 1) cands.push(d.itemPrices.reduce((a, b) => a + b, 0)); });
   if (pps?.data.cny != null) cands.push(pps.data.cny);
   const issues = [];
   if (!tb.length) issues.push(['bad', '缺淘寶訂單']);
@@ -881,7 +881,7 @@ function buildPages() {
     const parts = info.subs.map((g) => ({ g, rc: [] })), left = [];
     info.rc.forEach((r) => {
       const v = r.data.cny, no = r.data.orderNo;
-      const p = parts.find((pt) => (no && pt.g.key === no) || (v != null && pt.g.imgs.some((x) => { const d = x.data; return [d.goodsCNY, d.goodsCNY - (d.discountCNY || 0), ...(d.itemPrices || [])].some((c) => c != null && Math.abs(c - v) <= 0.05); })));
+      const p = parts.find((pt) => (no && pt.g.key === no) || (v != null && pt.g.imgs.some((x) => { const d = x.data; return [d.goodsCNY, d.goodsCNY - (d.discountCNY || 0), d.goodsCNY - (d.discountCNY || 0) + (d.shipCNY || 0), ...(d.itemPrices || [])].some((c) => c != null && Math.abs(c - v) <= 0.05); })));
       if (p) p.rc.push(r); else left.push(r);
     });
     parts.forEach((pt, k) => pages.push({ type: 'att', order: o, idx: i, part: k + 1, parts: parts.length, sub: pt.g,

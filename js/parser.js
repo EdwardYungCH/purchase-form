@@ -127,6 +127,9 @@ const Parser = (() => {
     let disc = 0;
     rows.filter((r) => /优惠|立减|红包|券|折扣/.test(r.text) && /-/.test(r.text)).forEach((r) => { const v = moneyIn(r.text); if (v.length) disc += v.at(-1); });
     out.discountCNY = disc;
+    let ship = 0;
+    rows.filter((r) => /[运運]费/.test(r.text) && !/海外|HKD/i.test(r.text)).forEach((r) => { const v = moneyIn(r.text); if (v.length) ship += v.at(-1); });
+    out.shipCNY = ship;
     const dts = [...flat.matchAll(/(20\d{2})-(\d{2})-(\d{2})/g)];
     if (dts.length) out.date = `${dts[0][1]}-${dts[0][2]}-${dts[0][3]}`;
     // 商品標題：左欄、長中文、非物流/地址
