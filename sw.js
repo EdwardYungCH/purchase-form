@@ -1,5 +1,5 @@
 /* 離線快取：第一次打開時把程式、中文辨識資料存起來，之後沒有網絡也可以用 */
-const VERSION = 'pf-v6';
+const VERSION = 'pf-v7';
 const PRECACHE = [
   './', 'index.html', 'js/app.js', 'js/parser.js', 'manifest.webmanifest',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',

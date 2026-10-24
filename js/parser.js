@@ -91,7 +91,7 @@ const Parser = (() => {
     if (out.hkd == null && out.bigHKD != null) out.hkd = out.bigHKD;
     const on = flat.match(/T200P(\d{15,20})/i); if (on) out.orderNo = on[1];
     const dt = flat.match(/(\d{2})\/(\d{2})\/(\d{2})(\d{2}:\d{2}(?::\d{2})?)?/);
-    if (dt) out.date = `20${dt[3]}-${dt[2]}-${dt[1]}`;
+    if (dt) { out.date = `20${dt[3]}-${dt[2]}-${dt[1]}`; if (dt[4]) out.paidAt = `${out.date} ${dt[4].length === 5 ? dt[4] + ':00' : dt[4]}`; }
     const shopRow = rowAfter(rows, /[订訂][单單哩]?[详詳][情]/);
     if (shopRow && shopRow.segs.length > 1) out.shop = shopRow.segs.slice(1).map((s) => s.text).join('').replace(/[与與]其他.*$/, '').trim();
     // 備註：備註行起至結尾
@@ -132,6 +132,11 @@ const Parser = (() => {
     out.shipCNY = ship;
     const dts = [...flat.matchAll(/(20\d{2})-(\d{2})-(\d{2})/g)];
     if (dts.length) out.date = `${dts[0][1]}-${dts[0][2]}-${dts[0][3]}`;
+    // 完整交易時間（年月日時分秒）：付款時間、創建時間
+    const dtAt = (re) => { const r = rows.find((x) => re.test(x.text.replace(/\s/g, ''))); const m = r && r.text.replace(/\s/g, '').match(/(20\d{2})-(\d{2})-(\d{2})(\d{2}):(\d{2}):(\d{2})/); return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}` : ''; };
+    out.paidAt = dtAt(/付[款歘]时间|付[款歘]時間/);
+    out.createdAt = dtAt(/[创創]建时间|[创創]建時間/);
+    if (!out.paidAt && !out.createdAt) { const m = flat.match(/(20\d{2})-(\d{2})-(\d{2})(\d{2}):(\d{2}):(\d{2})/); if (m) out.createdAt = `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}`; }
     // 商品標題：左欄、長中文、非物流/地址
     const BAD = /快递|快遞|物流|签收|簽收|已送达|运费|地址|省.*市|[区區].*[路街号號]|价保|退款|退货|售后|购物车|交易成功|交易快照|订单|收货|发票|评价|再买|删除|特别行政区|转运|集运|仓|电话|联系|微信|公众号|官方物流|旗舰店|专营店|旗艦店|^\W*$/;
     const leftLimit = imgW ? imgW * 0.68 : Infinity;

@@ -82,7 +82,7 @@ button { cursor: pointer; }
 .btn.danger { color: var(--bad); }
 .btn:disabled { opacity: .5; cursor: default; }
 
-main { padding-block: 20px 60px; display: grid; gap: 22px; }
+
 .step { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 18px 20px 20px; min-width: 0; }
 .step-h { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
 .step-h .n { font: 700 15px var(--f-num); color: var(--accent); background: var(--accent-soft); border-radius: 6px; padding: 1px 8px; }
@@ -191,6 +191,75 @@ main { padding-block: 20px 60px; display: grid; gap: 22px; }
 .m-rc button { position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); line-height: 1; padding: 0; font-size: 13px; }
 .m-empty { color: var(--warn); font-size: 12.5px; }
 @media (max-width: 760px) { .match { grid-template-columns: minmax(0, 1fr); } .m-pool { position: static; max-height: none; } .rc-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .m-row { grid-template-columns: minmax(0, 1fr); } }
+
+/* ===== 購物清單版面 ===== */
+.layout { display: grid; grid-template-columns: 264px minmax(0, 1fr); gap: 20px; align-items: start; padding-block: 20px 60px; }
+.content { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; min-width: 0; }
+#viewInbox, #viewPurchase { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; min-width: 0; }
+#viewPurchase > *, #viewInbox > * { min-width: 0; }
+#viewInbox[hidden], #viewPurchase[hidden] { display: none !important; }
+.nav { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 78px); display: grid; gap: 6px; max-height: calc(100dvh - 100px); overflow: auto; padding: 2px; }
+.nav-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; text-align: left; padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.nav-item:hover { border-color: var(--accent); }
+.nav-item.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); background: var(--accent-soft); }
+.nav-item.inbox, .nav-item.add { grid-template-columns: minmax(0, 1fr); }
+.nav-item.add { border-style: dashed; background: transparent; }
+.nav-main { display: grid; min-width: 0; }
+.nav-main b { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav-main span { font-size: 12px; color: var(--muted); }
+.nav-type { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 5px; border: 1px solid currentColor; white-space: nowrap; }
+.nav-type.taobao { color: var(--taobao); } .nav-type.general { color: var(--accent); }
+.nav-miss { font-size: 11.5px; color: var(--bad); font-weight: 700; white-space: nowrap; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.dot.ok { background: var(--ok); } .dot.busy { background: var(--warn); }
+.ptable { width: 100%; border-collapse: collapse; font-size: 14px; }
+.ptable th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12.5px; border-bottom: 1px solid var(--line); padding: 6px 8px; }
+.ptable td { border-bottom: 1px solid var(--line); padding: 8px; vertical-align: middle; }
+.ptable .num { text-align: right; } .pstat .chip { margin: 2px 4px 2px 0; }
+#plist { overflow-x: auto; }
+.p-head { display: flex; gap: 10px 14px; align-items: center; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 18px; box-shadow: var(--shadow); }
+.p-title { font: 700 20px var(--f-display); border: 1px solid transparent; background: transparent; border-radius: 8px; padding: 2px 6px; min-width: 0; flex: 1 1 220px; }
+.p-title:hover, .p-title:focus { border-color: var(--line); background: var(--surface-2); outline: none; }
+.checklist { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px 18px; display: flex; gap: 8px 16px; align-items: baseline; flex-wrap: wrap; }
+.checklist > b { font: 700 16px var(--f-display); }
+.checklist ul { list-style: none; margin: 0; padding: 0; display: flex; gap: 6px 16px; flex-wrap: wrap; font-size: 14px; }
+.checklist li { display: inline-flex; gap: 5px; align-items: baseline; }
+.checklist .ck { font-weight: 700; width: 1em; text-align: center; }
+.checklist .ok { color: var(--ok); } .checklist .bad { color: var(--bad); font-weight: 600; } .checklist .warn { color: var(--warn); } .checklist .busy { color: var(--muted); }
+.big { margin: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface-2); display: grid; min-width: 0; }
+.big-img { position: relative; background: #fff; display: flex; justify-content: center; }
+.big-img img { display: block; width: 100%; height: auto; max-height: 640px; object-fit: contain; cursor: zoom-in; }
+.big-img .state { position: absolute; top: 8px; right: 8px; }
+.big figcaption { display: flex; gap: 6px 10px; align-items: center; flex-wrap: wrap; padding: 7px 10px; font-size: 13px; border-top: 1px solid var(--line); }
+.big .cap { font-weight: 700; } .big .cap-acts { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; align-items: center; }
+.big select { font-size: 12.5px; border: 1px solid var(--line); border-radius: 6px; padding: 3px; background: var(--surface); max-width: 220px; }
+.pps-wrap { display: grid; grid-template-columns: minmax(0, 360px) minmax(0, 1fr); gap: 16px; align-items: start; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; font-size: 14px; }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; }
+.kv input { width: 120px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; font-family: var(--f-num); background: var(--surface); }
+.mos { display: grid; gap: 16px; }
+.mo { border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: var(--surface); }
+.mo-h { display: flex; gap: 6px 12px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; font-size: 13.5px; }
+.mo-h b { font: 700 16px var(--f-display); } .mo-h .grow { flex: 1; }
+.mo-body { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; align-items: start; }
+.mo-col { display: grid; gap: 10px; min-width: 0; }
+.mo-add { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.mo-add select, .slot-empty select { font-size: 13px; border: 1px solid var(--line); border-radius: 6px; padding: 4px; background: var(--surface); }
+.slot-empty.tall { min-height: 220px; } .slot-empty.wide { flex-direction: row; flex-wrap: wrap; min-height: 0; padding: 14px; justify-content: flex-start; }
+.loose { margin-top: 18px; border-top: 1px dashed var(--line); padding-top: 14px; }
+.loose h3 { margin: 0; font: 700 17px var(--f-display); } .loose .sub { margin: 2px 0 10px; color: var(--muted); font-size: 13px; }
+.loose-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+.add-rc { margin-top: 12px; }
+.add-row { margin-top: 10px; }
+.row.gen .row-top { grid-template-columns: minmax(0, 1fr) 140px 130px auto; }
+.code-f input { font-family: var(--f-num); }
+@media (max-width: 900px) {
+  .layout { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .nav { min-width: 0; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 62px); z-index: 4; display: flex; overflow-x: auto; max-height: none; background: var(--bg); padding: 6px 0; margin-inline: -4px; }
+  .nav-item { flex: 0 0 auto; max-width: 220px; }
+  .mo-body, .pps-wrap { grid-template-columns: minmax(0, 1fr); }
+  .row.gen .row-top { grid-template-columns: minmax(0, 1fr) 110px; }
+}
 .rule-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; background: var(--accent-soft); border-radius: 8px; padding: 8px 10px; }
 .rule-form .field { flex: 1 1 150px; }
 
@@ -255,73 +324,41 @@ dialog::backdrop { background: rgba(10,14,20,.55); }
   <div class="wrap">
     <div class="brand">
       <h1>購物記錄表助手</h1>
-      <p>淘寶訂單、PPS 紀錄和收據 → 申請支票支付購物款項表格連附件，下載 A4 PDF 列印</p>
+      <p>淘寶訂單、PPS 紀錄和收據 → 申請支票支付購物款項表格連附件，A4 列印</p>
     </div>
     <div class="top-actions">
+      <span id="saveChip" class="chip">未有資料</span>
       <span id="ocrChip" class="chip">文字辨識：未載入</span>
       <button id="btnSettings" class="btn" type="button">設定</button>
     </div>
   </div>
 </header>
 
-<main class="wrap">
-  <section class="step" id="s1">
-    <div class="step-h"><span class="n">1</span><h2>上載截圖</h2><span class="sub">一次過揀晒所有截圖和收據都可以，工具會自動分類，再按訂單編號配對。</span></div>
-    <div class="drop" id="drop">
-      <strong>拖放檔案到這裏，或按下面的按鈕揀選</strong>
-      <div class="kinds"><span class="tag k-taobao">淘寶訂單截圖</span><span class="tag k-pps">PPS 交易紀錄截圖</span><span class="tag k-receipt">收據相片／電子發票 PDF</span></div>
-      <label class="btn primary" for="fileIn">選擇檔案</label>
-      <input id="fileIn" class="sr" type="file" accept="image/*,application/pdf" multiple>
-      <div class="hint" style="margin-top:8px">電腦上亦可以截圖後直接按 Ctrl+V 貼上。所有圖片只在這個瀏覽器內處理，不會上載。</div>
+<div class="layout wrap">
+  <nav class="nav" id="nav" role="tablist" aria-label="購物清單"></nav>
+  <main class="content">
+    <div id="viewInbox">
+      <section class="step">
+        <div class="step-h"><h2>上載截圖</h2><span class="sub">淘寶訂單、PPS 紀錄、收據可以一次過揀晒。同一交易時間（年月日時分秒）的淘寶訂單會歸成同一次購物，用同一張申請表。</span></div>
+        <div class="drop" id="drop">
+          <strong>拖放檔案到這裏，或按下面的按鈕揀選</strong>
+          <div class="kinds"><span class="tag k-taobao">淘寶訂單截圖</span><span class="tag k-pps">PPS 交易紀錄截圖</span><span class="tag k-receipt">收據相片／電子發票 PDF</span></div>
+          <label class="btn primary" for="fileIn">選擇檔案</label>
+          <input id="fileIn" class="sr" type="file" accept="image/*,application/pdf" multiple>
+          <div class="hint" style="margin-top:8px">電腦上亦可以截圖後按 Ctrl+V 貼上。圖片和資料只儲存在這部裝置的瀏覽器內，未完成的可以下次再繼續。</div>
+        </div>
+        <div id="ocrNote" class="notice warn" hidden></div>
+        <div class="tray" id="tray" hidden><h3>未分類的圖片</h3><p class="sub">辨識不到屬於哪次購物，請用下拉選單放入。</p><div class="slots" id="trayList"></div></div>
+      </section>
+      <section class="step">
+        <div class="step-h"><h2>全部購物</h2><span class="sub">按交易時間排列，新的在上面。</span>
+          <div class="right"><button class="btn small" id="btnAllPrint" type="button" hidden>全部列印</button><button class="btn small" id="btnAllPDF" type="button">全部下載 PDF</button></div></div>
+        <div id="plist"></div>
+      </section>
     </div>
-    <div id="demoNote" class="notice" hidden><span>現在顯示的是<b>示範資料</b>（虛構訂單）。上載你自己的截圖後會自動清除。</span><button class="btn small" id="btnClearDemo" type="button">清除示範</button></div>
-    <div id="ocrNote" class="notice warn" hidden></div>
-  </section>
-
-  <section class="step" id="s2">
-    <div class="step-h"><span class="n">2</span><h2>核對訂單</h2><span class="sub">檢查每張訂單的三樣文件是否齊全、金額是否相符；分錯了可以用下拉選單搬動。</span>
-      <div class="right"><button class="btn small" id="btnAddOrder" type="button">＋ 新增空白訂單</button></div></div>
-    <div class="orders" id="orders"></div>
-    <div class="tray" id="tray" hidden><h3>未配對的圖片</h3><div class="slots" id="trayList"></div></div>
-    <div class="match-wrap" id="matchWrap" hidden>
-      <h3>收據配對</h3>
-      <p class="match-sub">收據讀不到或者對不上貨品時，可以在這裏手動配對。附件會按配對結果，把收據放在對應貨品的申請表後面。</p>
-      <div class="match" id="match"></div>
-    </div>
-  </section>
-
-  <section class="step" id="s3">
-    <div class="step-h"><span class="n">3</span><h2>填寫表格</h2><span class="sub">貨品名稱已自動精簡並轉成繁體，可以直接修改。</span></div>
-    <div class="global">
-      <label class="field"><span>商戶名稱（收票人）</span><input id="g_payee" autocomplete="off"></label>
-      <label class="field"><span>申請人姓名</span><input id="g_applicant" autocomplete="off"></label>
-      <label class="field"><span>申請日期（可留空，簽名時手寫）</span><input id="g_date" autocomplete="off" placeholder="例如 22/10/2026"></label>
-      <label class="field"><span>分表方式</span>
-        <select id="g_group"><option value="order">每次購物分開填寫</option><option value="merge">不同購物可以填在同一張表</option></select></label>
-    </div>
-    <div class="shared">
-      <div class="shared-h"><strong>全部貨品共用</strong><span class="sub">填好後按「套用到全部」；新加入的貨品亦會用這些設定。每行貨品仍可以個別修改。</span>
-        <button class="btn small primary" id="btnApplyAll" type="button">套用到全部</button></div>
-      <div class="fgrid" id="sharedFields"></div>
-    </div>
-    <div class="rows" id="rows"></div>
-  </section>
-
-  <section class="step" id="s4">
-    <div class="step-h"><span class="n">4</span><h2>預覽及下載</h2><span class="sub" id="pvSummary"></span></div>
-    <div class="pv-bar">
-      <label>排列 <select id="pv_layout"><option value="sets">每張申請表連附件一套</option><option value="compact">申請表集中，附件在後</option></select></label>
-      <label><input type="checkbox" id="pv_att" checked> 附上淘寶訂單、收據和 PPS 紀錄</label>
-      <label><input type="checkbox" id="pv_cap" checked> 附件頁頂加上訂單資料</label>
-    </div>
-    <div class="pages" id="pages"></div>
-    <div class="dl-row">
-      <button class="btn primary" id="btnPrint" type="button" hidden>直接列印</button>
-      <button class="btn primary" id="btnPDF" type="button">下載 PDF</button>
-      <span class="sub" id="dlNote">用電腦或手機開啟 PDF 後，以 A4、「實際大小」(100%) 列印。</span>
-    </div>
-  </section>
-</main>
+    <div id="viewPurchase" hidden></div>
+  </main>
+</div>
 
 <dialog id="cropDlg" aria-labelledby="cropTitle">
   <div class="dlg-h"><h3 id="cropTitle">裁剪圖片</h3><button class="btn primary" id="cropDone" type="button">完成</button></div>
@@ -347,6 +384,10 @@ dialog::backdrop { background: rgba(10,14,20,.55); }
   <div class="dlg-h"><h3 id="setTitle">設定</h3><span class="chip" id="syncChip">只儲存在這部裝置</span><button class="btn primary" id="setSave" type="button">儲存</button></div>
   <div class="dlg-b">
     <div class="set-sec" style="margin-top:0">
+      <h4>預設資料</h4>
+      <div class="set-grid"><label class="field"><span>商戶名稱（收票人）預設</span><input id="set_payee" autocomplete="off"></label><label class="field"><span>申請人姓名</span><input id="set_applicant" autocomplete="off"></label></div>
+    </div>
+    <div class="set-sec">
       <h4>下拉選單選項</h4>
       <p>每行一個選項。填表時新輸入的內容亦會自動加進這裏。</p>
       <div class="set-grid" id="optEditors"></div>

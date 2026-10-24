@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "淘寶訂單截圖",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "一鍵截取淘寶訂單詳情（只截訂單範圍），訂單資料會寫入圖片，給「購物記錄表助手」直接讀取。",
   "action": {
     "default_popup": "popup.html",

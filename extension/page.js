@@ -106,6 +106,7 @@ function pfData(limit) {
     if (/^支付手续费/.test(l)) fee = money(v);
   });
   out.shipCNY = ship; out.discountCNY = Math.round(disc * 100) / 100; out.feeHKD = fee;
+  out.paidAt = pick(/付款时间\s*[:：]?\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/) || '';
   out.created = pick(/创建时间\s*[:：]?\s*(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2}:\d{2})?)/) || pick(/付款时间\s*[:：]?\s*(\d{4}-\d{2}-\d{2})/) || '';
 
   // 商品：先找數量（x6），再向上找包含價錢的一行，標題取該行內第一行長中文
