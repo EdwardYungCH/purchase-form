@@ -1342,25 +1342,34 @@ function buildForms(o) {
   return forms;
 }
 /* 一張申請表的附件：表內的淘寶訂單和收據，PPS 紀錄放第一頁 */
-function chunkImgs(imgs, fixed) {
-  if (imgs.length <= 6) return [imgs];
-  const out = [imgs.slice(0, fixed + 3)]; for (let i = fixed + 3; i < imgs.length; i += 4) out.push(imgs.slice(i, i + 4)); return out;
+/* 附件版面：PPS 紀錄獨立一頁；每張訂單和它的收據放同一頁，放不下（圖片會縮得太細）就分開兩頁 */
+const ATT_W = A4.w - 20, ATT_H = A4.h - 10 - 19;
+function imgAspect(im) { const c = cropped(im); return c.width / c.height; }
+function areaOf(imgs, idx) {
+  const lay = packImages(imgs.map((im) => ({ a: imgAspect(im) })), ATT_W, ATT_H, 4);
+  return lay.filter((b) => idx.includes(b.i)).reduce((t, b) => t + b.w * b.h, 0);
+}
+function chunk(arr, n) { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; }
+function orderPages(orderImgs, rcs) {
+  if (!rcs.length) return chunk(orderImgs, 3).map((p) => ({ imgs: p, what: 'order' }));
+  if (!orderImgs.length) return chunk(rcs, 4).map((p) => ({ imgs: p, what: 'receipt' }));
+  const all = [...orderImgs, ...rcs], oi = orderImgs.map((_, i) => i);
+  const alone = areaOf(orderImgs, oi), together = areaOf(all, oi);
+  const rcAlone = areaOf(rcs, rcs.map((_, i) => i)), rcTogether = areaOf(all, rcs.map((_, i) => i + orderImgs.length));
+  // 訂單截圖及收據放在一起時，各自仍保留單獨一頁時至少約六成面積（約八成闊度），才放同一頁
+  if (all.length <= 4 && together >= alone * 0.5 && rcTogether >= rcAlone * 0.3) return [{ imgs: all, what: 'both' }];
+  return [...chunk(orderImgs, 3).map((p) => ({ imgs: p, what: 'order' })), ...chunk(rcs, 4).map((p) => ({ imgs: p, what: 'receipt' }))];
 }
 function formAttachments(f, forms) {
   const o = f.order; if (o.type !== 'taobao') return [];
-  const info = orderInfo(o), pages = [];
-  const rowSet = new Set(f.rows.map((r) => r.id)), firstForm = f.no === 1;
-  const groups = [];
-  [...new Set(f.rows.map((r) => r.subKey))].forEach((k) => { const g = info.subs.find((s) => s.key === k); if (g) groups.push({ g, imgs: [...g.imgs, ...g.rc], fixed: g.imgs.length }); });
-  if (!groups.length) groups.push({ g: null, imgs: [...info.tb], fixed: info.tb.length });
-  if (firstForm && info.loose.length) groups[groups.length - 1].imgs.push(...info.loose);
-  void rowSet;
-  groups.forEach((gr, k) => {
-    const imgs = [...gr.imgs];
-    if (k === 0 && info.pps) imgs.push(info.pps);
-    if (!imgs.length) return;
-    chunkImgs(imgs, gr.fixed).forEach((part) => pages.push({ type: 'att', order: o, info, sub: gr.g, imgs: part, formNo: f.no, formOf: f.of }));
-  });
+  const info = orderInfo(o), pages = [], firstForm = f.no === 1;
+  const base = { type: 'att', order: o, info, formNo: f.no, formOf: f.of };
+  if (info.pps) pages.push({ ...base, sub: null, imgs: [info.pps], what: 'pps' });
+  const keys = [...new Set(f.rows.map((r) => r.subKey))];
+  const subs = keys.map((k) => info.subs.find((s) => s.key === k)).filter(Boolean);
+  if (subs.length) subs.forEach((g) => orderPages(g.imgs, g.rc).forEach((p) => pages.push({ ...base, sub: g, ...p })));
+  else if (info.tb.length) orderPages(info.tb, []).forEach((p) => pages.push({ ...base, sub: null, ...p }));
+  if (firstForm && info.loose.length) chunk(info.loose, 4).forEach((p) => pages.push({ ...base, sub: null, imgs: p, what: 'loose' }));
   pages.forEach((p, i) => { p.part = i + 1; p.parts = pages.length; });
   return pages;
 }
@@ -1403,9 +1412,13 @@ function drawAttachment(pen, page) {
   const M = 10, W = A4.w - M * 2;
   let top = M;
   if (s.caption) {
-    const no = page.sub ? page.sub.no : info.orderNo;
-    const parts = [`${purchaseLabel(page.order)}・申請表 ${page.formNo}${page.formOf > 1 ? `/${page.formOf}` : ''} 附件 ${page.part}/${page.parts}`, no ? `淘寶訂單編號 ${no}` : '', page.sub && page.sub.hkd != null ? `淘寶實付 HK$${money(page.sub.hkd)}` : '',
-      info.hkdPPS != null ? `PPS 付款 HK$${money(info.hkdPPS)}` : '', info.when ? `交易時間 ${info.when}` : ''].filter(Boolean);
+    const head = `${purchaseLabel(page.order)}・申請表 ${page.formNo}${page.formOf > 1 ? `/${page.formOf}` : ''} 附件 ${page.part}/${page.parts}`;
+    const sl = page.sub ? subLabel(info.subs, info.subs.indexOf(page.sub)) : '';
+    let parts;
+    if (page.what === 'pps') parts = [head, 'PPS 付款紀錄', info.hkdPPS != null ? `HK$${money(info.hkdPPS)}` : '', info.pps?.data.paidAt ? `交易時間 ${info.pps.data.paidAt}` : '', info.hkdTB != null ? `淘寶訂單合計 HK$${money(info.hkdTB)}` : ''];
+    else if (page.what === 'loose') parts = [head, '未對應訂單的收據'];
+    else parts = [head, `${sl}${page.what === 'receipt' ? ' 收據' : page.what === 'order' && page.sub?.rc?.length ? ' 訂單截圖' : ''}`, page.sub?.no ? `淘寶訂單編號 ${page.sub.no}` : '', page.sub && page.sub.hkd != null ? `淘寶實付 HK$${money(page.sub.hkd)}` : ''];
+    parts = parts.filter(Boolean);
     const cap = parts.join('　｜　'); let cs = 3.3;
     while (cs > 2.3 && pen.measure(cap, cs, { family: SANS }) > W) cs -= 0.1;
     pen.text(cap, M, M + 3.6, cs, { family: SANS });
@@ -1735,6 +1748,6 @@ async function init() {
   setTimeout(() => ensureWorker().catch(() => {}), 1200);
   loadTemplate();
 }
-window.__app = { S, Parser, orderInfo, buildPages, renderPage, addFiles, suggestName, ensureTemplate, TPL, buildForms };
+window.__app = { S, Parser, orderInfo, buildPages, renderPage, addFiles, suggestName, ensureTemplate, TPL, buildForms, orderPages };
 init();
 })();
