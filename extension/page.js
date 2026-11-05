@@ -139,13 +139,13 @@ function itemsFromLines(all) {
   for (const l of L.slice(s + 1, e)) {
     if (/查看交易快照/.test(l)) continue;
     const pm = l.match(/^[¥￥]\s*([\d,]+\.\d{2})$/);
-    if (pm) { if (cur && cur.price == null) cur.price = parseFloat(pm[1].replace(/,/g, '')); continue; }
+    if (pm) { if (cur) { const v = parseFloat(pm[1].replace(/,/g, '')); if (cur.price == null) cur.price = v; else if (cur.orig == null) cur.orig = v; } continue; }
     const qm = l.match(/^[x×ｘ*]\s*(\d{1,4})$/i);
     if (qm) { if (cur) cur.qty = parseInt(qm[1], 10); continue; }
     if (SERVICE.test(l) || BTN.test(l) || /^包裹\s*\d|^官方物流|快递\s*\d|^\d{6,}$/.test(l)) continue;
     const titleLike = cjk(l) >= 6 || (l.length >= 12 && /[A-Za-z一-鿿]/.test(l));
     if (cur && cur.price == null && !cur.sku && l.length >= 2) { cur.sku = l; continue; }   // 標題後第一行是規格
-    if (titleLike) { push(); cur = { title: l.replace(/\s+/g, ' '), sku: '', price: null, qty: 1 }; }
+    if (titleLike) { push(); cur = { title: l.replace(/\s+/g, ' '), sku: '', price: null, orig: null, qty: 1 }; }
   }
   push();
   return { items, shop };

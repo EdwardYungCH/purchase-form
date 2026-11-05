@@ -89,6 +89,12 @@ const Parser = (() => {
     const big = rows.slice(0, 6).map((r) => r.text).join(' ').match(/([\d,]+\.\d{2})/);
     if (big) out.bigHKD = toNum(big[1]);
     if (out.hkd == null && out.bigHKD != null) out.hkd = out.bigHKD;
+    // 自我核對：人民幣 × 匯率 ≈ 訂單港幣；手續費約為訂單金額的 0.5%–3%；大字金額 = 訂單金額 + 手續費
+    const chk = [];
+    if (out.cny != null && out.rate && out.orderHKD != null) chk.push(Math.abs(out.cny * out.rate - out.orderHKD) <= 0.06);
+    if (out.fee != null && out.orderHKD) chk.push(out.fee / out.orderHKD > 0.004 && out.fee / out.orderHKD < 0.035);
+    if (out.bigHKD != null && out.hkd != null) chk.push(Math.abs(out.bigHKD - out.hkd) <= 0.011);
+    out.verified = chk.filter(Boolean).length >= 2 && chk[0] !== false;
     const on = flat.match(/T200P(\d{15,20})/i); if (on) out.orderNo = on[1];
     const dt = flat.match(/(\d{2})\/(\d{2})\/(\d{2})(\d{2}:\d{2}(?::\d{2})?)?/);
     if (dt) { out.date = `20${dt[3]}-${dt[2]}-${dt[1]}`; if (dt[4]) out.paidAt = `${out.date} ${dt[4].length === 5 ? dt[4] + ':00' : dt[4]}`; }
@@ -133,11 +139,12 @@ const Parser = (() => {
     const totRow = rowAfter(rows, /商品[总總]价/);
     if (totRow) { const v = moneyIn(totRow.text); if (v.length) out.goodsCNY = v.at(-1); }
     let disc = 0;
-    rows.filter((r) => /优惠|立减|红包|券|折扣/.test(r.text) && /-/.test(r.text)).forEach((r) => { const v = moneyIn(r.text); if (v.length) disc += v.at(-1); });
+    rows.filter((r) => /优惠|立减|红包|券|折扣|礼金/.test(r.text) && /-/.test(r.text) && !/HKD/i.test(r.text)).forEach((r) => { const v = moneyIn(r.text); if (v.length) disc += v.at(-1); });
     out.discountCNY = disc;
     let ship = 0;
     rows.filter((r) => /[运運]费/.test(r.text) && !/海外|HKD/i.test(r.text)).forEach((r) => { const v = moneyIn(r.text); if (v.length) ship += v.at(-1); });
     out.shipCNY = ship;
+    const ovRow = rows.find((r) => /海外[运運]费/.test(r.text)); if (ovRow) { const v = moneyIn(ovRow.text); if (v.length) out.overseasCNY = v.at(-1); }
     const dts = [...flat.matchAll(/(20\d{2})-(\d{2})-(\d{2})/g)];
     if (dts.length) out.date = `${dts[0][1]}-${dts[0][2]}-${dts[0][3]}`;
     // 完整交易時間（年月日時分秒）：付款時間、創建時間
@@ -150,8 +157,12 @@ const Parser = (() => {
     const leftLimit = imgW ? imgW * 0.68 : Infinity;
     const itemPrices = [];
     rows.forEach((r, idx) => {
-      r.segs.forEach((s) => {
-        if (s.x > leftLimit) return;
+      // 店舖名稱那一行（右邊有「查看交易快照」）不是商品
+      if (/交易快照|查看交易/.test(r.text.replace(/\s/g, ''))) return;
+      // 同一行左欄的幾段文字合併（標題中間有空位時會被切開），價錢那段除外
+      const left = r.segs.filter((s) => s.x <= leftLimit && !/^[¥羊半芋苦对芭￥]?\d+\.\d{2}$/.test(s.text.replace(/\s/g, '')));
+      const merged = left.length ? [{ text: left.map((s) => s.text).join('') }] : [];
+      merged.forEach((s) => {
         const t = s.text.replace(/\s/g, '');
         if (cjkCount(t) < 8 || BAD.test(t)) return;
         // 去掉黏住的價錢

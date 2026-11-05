@@ -85,8 +85,11 @@ async function captureCurrent() {
   await setStatus('截圖中…', 'busy');
   try {
     const r = await captureTab(tab);
-    const n = r.data.items?.length || 0;
-    await setStatus(`已儲存 ${r.name.split('/').pop()}（${n} 件貨品${r.data.paidHKD != null ? `，HK$${r.data.paidHKD.toFixed(2)}` : ''}）${r.ok ? '' : '・找不到訂單範圍，已截整頁'}`, r.ok ? 'ok' : 'warn');
+    const its = r.data.items || [], n = its.length, g = r.data.goodsCNY;
+    const sumP = its.reduce((t, it) => t + (it.price || 0) * (it.qty || 1), 0), sumO = its.reduce((t, it) => t + (it.orig ?? it.price ?? 0) * (it.qty || 1), 0);
+    const itemsOK = n > 0 && g != null && (Math.abs(sumP - g) <= 0.11 || Math.abs(sumO - g) <= 0.11);
+    const good = r.ok && itemsOK && r.data.paidHKD != null && (r.data.paidAt || r.data.created);
+    await setStatus(`已儲存 ${r.name.split('/').pop()}（${n} 件商品${r.data.paidHKD != null ? `，HK$${r.data.paidHKD.toFixed(2)}` : ''}）${itemsOK ? '・商品總價已核對' : '・商品可能未讀齊，助手會用文字辨識補上'}${r.ok ? '' : '・找不到訂單範圍，已截整頁'}`, good ? 'ok' : 'warn');
     chrome.action.setBadgeText({ text: '✓', tabId: tab.id }); chrome.action.setBadgeBackgroundColor({ color: '#1d7a46' });
   } catch (e) {
     await setStatus('截圖失敗：' + (e.message || e), 'bad');

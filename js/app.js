@@ -361,13 +361,13 @@ function itemsFromLines(all) {
   for (const l of L.slice(s + 1, e)) {
     if (/查看交易快照/.test(l)) continue;
     const pm = l.match(/^[¥￥]\s*([\d,]+\.\d{2})$/);
-    if (pm) { if (cur && cur.price == null) cur.price = parseFloat(pm[1].replace(/,/g, '')); continue; }
+    if (pm) { if (cur) { const v = parseFloat(pm[1].replace(/,/g, '')); if (cur.price == null) cur.price = v; else if (cur.orig == null) cur.orig = v; } continue; }
     const qm = l.match(/^[x×ｘ*]\s*(\d{1,4})$/i);
     if (qm) { if (cur) cur.qty = parseInt(qm[1], 10); continue; }
     if (SERVICE.test(l) || BTN.test(l) || /^包裹\s*\d|^官方物流|快递\s*\d|^\d{6,}$/.test(l)) continue;
     const titleLike = cjk(l) >= 6 || (l.length >= 12 && /[A-Za-z一-鿿]/.test(l));
     if (cur && cur.price == null && !cur.sku && l.length >= 2) { cur.sku = l; continue; }   // 標題後第一行是規格
-    if (titleLike) { push(); cur = { title: l.replace(/\s+/g, ' '), sku: '', price: null, qty: 1 }; }
+    if (titleLike) { push(); cur = { title: l.replace(/\s+/g, ' '), sku: '', price: null, orig: null, qty: 1 }; }
   }
   push();
   return { items, shop };
@@ -377,8 +377,11 @@ function extData(m) {
   let src = m.items || [];
   if (!src.filter((it) => it && it.title && !JUNK_TITLE.test(it.title)).length && Array.isArray(m.lines)) src = itemsFromLines(m.lines).items; // 用保存的頁面文字重新分析
   if ((!m.shop || /免费开店|开店|首页/.test(m.shop)) && Array.isArray(m.lines)) m.shop = itemsFromLines(m.lines).shop;
-  const items = src.filter((it) => it && it.title && !JUNK_TITLE.test(it.title)).map((it) => ({ title: it.title, sku: it.sku || '', price: it.price ?? null, qty: it.qty || 1 }));
-  return { kind: 'taobao', fromExt: true, orderNo: m.orderNo || '', hkd: m.paidHKD ?? null, goodsCNY: m.goodsCNY ?? null, discountCNY: m.discountCNY || 0,
+  const items = src.filter((it) => it && it.title && !JUNK_TITLE.test(it.title)).map((it) => ({ title: it.title, sku: it.sku || '', price: it.price ?? null, orig: it.orig ?? null, qty: it.qty || 1 }));
+  // 商品是否讀齊：商品原價或售價 × 數量的總和 = 商品總價
+  const sumP = items.reduce((t, it) => t + (it.price ?? 0) * it.qty, 0), sumO = items.reduce((t, it) => t + (it.orig ?? it.price ?? 0) * it.qty, 0);
+  const itemsOK = m.goodsCNY != null && items.length > 0 && (Math.abs(sumP - m.goodsCNY) <= 0.11 || Math.abs(sumO - m.goodsCNY) <= 0.11);
+  return { kind: 'taobao', fromExt: true, itemsOK, orderNo: m.orderNo || '', hkd: m.paidHKD ?? null, goodsCNY: m.goodsCNY ?? null, discountCNY: m.discountCNY || 0,
     shipCNY: m.shipCNY || 0, date: (m.paidAt || m.created || '').slice(0, 10),
     paidAt: /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(m.paidAt || '') ? m.paidAt : '', createdAt: /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(m.created || '') ? m.created : '', shop: /免费开店/.test(m.shop || '') ? '' : (m.shop || ''), titles: items.map((it) => it.title), items, itemPrices: items.map((it) => it.price).filter((v) => v != null) };
 }
@@ -841,9 +844,35 @@ function thumbHTML(img) {
     <div class="img"><img alt="${esc(img.name)}" src="${thumbURL(img)}" data-zoom="${img.id}"><span class="state" data-state="${img.id}">${stateChip(img)}</span></div>
     <div class="tb"><button class="btn small" type="button" data-act="crop" data-img="${img.id}">裁剪</button>${moveSelect(img)}</div></div>`;
 }
+/* 每張圖的自動核對結果 */
+function verifyImg(img) {
+  const d = img.data || {};
+  if (img.status !== 'done') return null;
+  if (img.kind === 'taobao') {
+    const confirmed = S.rows.some((r) => r.orderId === img.orderId && r.subKey === (d.orderNo || img.id) && r.edited);
+    if (d.fromExt) return d.itemsOK || confirmed ? { ok: true, text: d.itemsOK ? '已核對（讀自淘寶網頁）' : '名稱已確認' } : { ok: false, text: d.items?.length ? '商品可能未讀齊，請核對名稱' : '商品名稱由文字辨識，請核對' };
+    const probs = [];
+    if (!/^\d{17,20}$/.test(d.orderNo || '')) probs.push('訂單編號');
+    if (d.hkd == null) probs.push('實付金額');
+    if (!d.paidAt && !d.createdAt) probs.push('交易時間');
+    const base = d.goodsCNY != null ? d.goodsCNY - (d.discountCNY || 0) + (d.shipCNY || 0) + (d.overseasCNY || 0) : null;
+    if (d.hkd != null && base > 0) { const r = d.hkd / base; if (r < 1.08 || r > 1.3) probs.push('金額'); }
+    if (!probs.length && !confirmed) return { ok: false, text: '數字已核對，請確認名稱' };
+    return probs.length ? { ok: false, text: '請核對：' + probs.join('、') } : { ok: true, text: '數字及名稱已核對' };
+  }
+  if (img.kind === 'pps') {
+    const probs = [];
+    if (d.hkd == null) probs.push('金額'); if (!d.paidAt) probs.push('交易時間'); if (!d.orderNo) probs.push('商戶訂單號');
+    if (probs.length) return { ok: false, text: '請核對：' + probs.join('、') };
+    return d.verified ? { ok: true, text: '金額已核對' } : { ok: false, text: '請核對金額' };
+  }
+  if (img.kind === 'receipt') return d.cny != null ? { ok: true, text: `讀到金額 ¥${money(d.cny)}` } : null;
+  return null;
+}
+function verifyChip(img) { const v = verifyImg(img); return v ? `<span class="chip ${v.ok ? 'ok' : 'warn'}">${esc(v.text)}</span>` : ''; }
 function bigFig(img, caption, actions) {
   return `<figure class="big" data-fig="${img.id}"><div class="big-img"><img src="${bigURL(img)}" alt="${esc(caption)}" data-zoom="${img.id}" title="按一下放大"><span class="state" data-state="${img.id}">${stateChip(img)}</span></div>
-    <figcaption><span class="cap">${caption}</span><span class="cap-acts">${actions || ''}<button class="btn small" type="button" data-act="crop" data-img="${img.id}">裁剪</button></span></figcaption></figure>`;
+    <figcaption><span class="cap">${caption}</span>${verifyChip(img)}<span class="cap-acts">${actions || ''}<button class="btn small" type="button" data-act="crop" data-img="${img.id}">裁剪</button></span></figcaption></figure>`;
 }
 function missingHTML(info, o) {
   if (info.busy) return '<span class="chip busy">辨識中</span>';
@@ -925,6 +954,8 @@ function checklistHTML(o, info) {
   items.push(info.pps ? ok('PPS 付款紀錄') : bad('欠 PPS 付款紀錄'));
   info.subs.forEach((g, i) => items.push(g.rc.length ? ok(`${subLabel(info.subs, i)} 收據 ${g.rc.length} 張`) : bad(`欠收據：${subLabel(info.subs, i)}${g.no ? `（…${g.no.slice(-4)}）` : ''}`)));
   if (info.loose.length) items.push(warn(`${info.loose.length} 張收據未配對`));
+  const toCheck = [...info.tb, info.pps].filter(Boolean).filter((x) => { const v = verifyImg(x); return v && !v.ok; }).length;
+  if (toCheck) items.push(warn(`${toCheck} 張截圖請核對（見圖下的黃色提示）`));
   if (info.pps && info.hkdTB != null) items.push(info.ppsOK ? ok(`PPS HK$${money(info.hkdPPS)} ＝ ${info.subs.length} 張訂單合計`) : warn(`PPS HK$${money(info.hkdPPS)}，訂單合計 HK$${money(info.hkdTB)}，相差 HK$${money(Math.abs(info.hkdPPS - info.hkdTB))}`));
   if (info.busy) items.push('<li class="busy"><span class="ck">…</span>文字辨識中</li>');
   return `<b>${info.missing.length ? '還欠' : '齊單'}</b><ul>${items.join('')}</ul>`;
@@ -994,7 +1025,7 @@ function rowHTML(r, o) {
       ${isG ? `<label class="field code-f"><span>編號</span><input data-f="code" value="${esc(r.code || '')}" autocomplete="off"></label>` : ''}
       <label class="field amt-f"><span>金額 HK$</span><input data-f="hkd" inputmode="decimal" value="${r.hkd != null ? money(r.hkd) : ''}" autocomplete="off"></label>
       <div class="row-btns"><button class="btn small" type="button" data-act="add-row" title="在下面加一行">＋一行</button><button class="btn small ghost danger" type="button" data-act="del-row" aria-label="刪除這行">刪除</button></div></div>
-    ${titles.length ? `<div class="row-src">原標題：${titles.slice(0, 4).map((t, i) => `<button type="button" data-act="use-title" data-t="${i}" title="用這個標題（精簡後）">${esc(toHK(t).slice(0, 40))}${t.length > 40 ? '…' : ''}</button>`).join('')} ${r.edited ? '<button type="button" data-act="remember">記住這個名稱</button>' : ''}</div>` : ''}
+    ${titles.length ? `<div class="row-src">原標題：${titles.slice(0, 4).map((t, i) => `<button type="button" data-act="use-title" data-t="${i}" title="用這個標題（精簡後）">${esc(toHK(t).slice(0, 40))}${t.length > 40 ? '…' : ''}</button>`).join('')} ${r.edited ? '<button type="button" data-act="remember">記住這個名稱</button>' : (o.type === 'taobao' ? '<button type="button" data-act="name-ok" class="okbtn">名稱正確</button>' : '')}</div>` : ''}
     <div class="rule-host"></div>
     <details class="more" ${S.openRows.has(r.id) ? 'open' : ''}><summary>其他欄位：<span data-sum>${esc(rowSummary(r))}</span></summary>
     <div class="fgrid">${FIELDS.map((f) => fieldInput(f, r[f.k], `data-f="${f.k}"`)).join('')}
@@ -1599,6 +1630,7 @@ function bind() {
     if (!r) return;
     if (act === 'add-row') { const nr = newRow(r.orderId, ''); nr.subKey = r.subKey; nr.after = r.id; nr.hkdEdited = true; nr.edited = true; S.rows.splice(S.rows.indexOf(r) + 1, 0, nr); syncRows(); rerenderKeepScroll(); document.querySelector(`[data-row="${nr.id}"] [data-f="name"]`)?.focus(); }
     if (act === 'del-row') { S.rows = S.rows.filter((x) => x !== r); if (r.autoKey) S.deleted.add(`${r.orderId}|${r.autoKey}`); rerenderKeepScroll(); }
+    if (act === 'name-ok') { r.edited = true; learnName(r.titles || [], r.name); rerenderKeepScroll(); return; }
     if (act === 'use-title') { r.name = shorten((r.titles || [])[+b.dataset.t]); r.edited = true; rerenderKeepScroll(); }
     if (act === 'remember') {
       const host = rowEl.querySelector('.rule-host');
