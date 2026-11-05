@@ -260,6 +260,12 @@ button { cursor: pointer; }
   .mo-body, .pps-wrap { grid-template-columns: minmax(0, 1fr); }
   .row.gen .row-top { grid-template-columns: minmax(0, 1fr) 110px; }
 }
+.ov { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; background: var(--surface); display: grid; gap: 8px; }
+.ov-h { display: flex; gap: 6px 12px; align-items: center; flex-wrap: wrap; }
+.ov-h b { font: 700 16px var(--f-display); } .ov-h .grow { flex: 1; }
+.ov-miss .chip, .ov-pps .chip { margin: 2px 6px 2px 0; }
+.ov-pps { display: flex; gap: 6px 10px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.muted { color: var(--muted); font-size: 12.5px; }
 .rule-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; background: var(--accent-soft); border-radius: 8px; padding: 8px 10px; }
 .rule-form .field { flex: 1 1 150px; }
 
@@ -351,7 +357,7 @@ dialog::backdrop { background: rgba(10,14,20,.55); }
         <div class="tray" id="tray" hidden><h3>未分類的圖片</h3><p class="sub">辨識不到屬於哪次購物，請用下拉選單放入。</p><div class="slots" id="trayList"></div></div>
       </section>
       <section class="step">
-        <div class="step-h"><h2>全部購物</h2><span class="sub">按交易時間排列，新的在上面。</span>
+        <div class="step-h"><h2>全部總購物紀錄</h2><span class="sub">每筆 PPS 付款一個總購物紀錄，按交易時間排列（新的在上面），列出內容和還欠甚麼。</span>
           <div class="right"><button class="btn small" id="btnAllPrint" type="button" hidden>全部列印</button><button class="btn small" id="btnAllPDF" type="button">全部下載 PDF</button></div></div>
         <div id="plist"></div>
       </section>

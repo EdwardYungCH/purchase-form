@@ -72,7 +72,7 @@ async function captureTab(tab) {
     const png = withText(new Uint8Array(await blob.arrayBuffer()), 'pf-data', json);
     const day = (data.created || new Date().toISOString()).slice(0, 10);
     const name = `淘寶訂單/${day}_${data.orderNo || '未讀到訂單編號'}.png`;
-    self.__lastPng = png;
+    self.__lastPng = png; self.__lastMeta = data;
     await chrome.downloads.download({ url: 'data:image/png;base64,' + b64(png), filename: name, conflictAction: 'uniquify', saveAs: false });
     return { name, data, ok: prep.ok };
   } finally {

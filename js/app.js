@@ -27,7 +27,16 @@ const FIELDS = [
 ];
 const OPT_LABELS = { reason: '購物原因', location: '貯放位置', dept: '支付款項組別', subgroup: '組別內的小組', category: '支付款項類別', grant: '津貼 (grant)', person: '組別負責人姓名' };
 
-const DEFAULT_RULES = `送料|挤出机|挤出|喷嘴|喷头|热端|硅胶套|打印头|擦嘴|清洁针|热敏电阻 = 3D打印配件
+const RULES_V2 = `发光线|冷光线|el线 = 冷光線
+补光灯|补光 = 補光燈
+WS2812|像素屏|灯珠 = LED像素屏
+电容 = 電容
+铝型材 = 鋁型材
+云台|三角架|三脚架 = 雲台／三腳架
+DC电源插座|DC插头|DC公头|DC母头|DC5521 = DC電源插頭
+摄像头模组|全局快门 = 攝像頭模組`;
+const DEFAULT_RULES = RULES_V2 + `
+送料|挤出机|挤出|喷嘴|喷头|热端|硅胶套|打印头|擦嘴|清洁针|热敏电阻 = 3D打印配件
 PEI|打印板|热床|打印平台|磁吸板 = 3D打印板
 PLA|PETG|ABS耗材|打印耗材|线材|耗材 = 3D打印耗材
 3D打印 = 3D打印配件
@@ -95,6 +104,8 @@ const DEFAULT_SETTINGS = {
   },
   rulesText: DEFAULT_RULES,
   stopText: DEFAULT_STOP,
+  learned: {},
+  rulesVer: 2,
 };
 
 /* ================= 狀態 ================= */
@@ -132,6 +143,7 @@ function mergeSettings(obj) {
   if (!obj || typeof obj !== 'object') return;
   const d = clone(DEFAULT_SETTINGS);
   const s = { ...d, ...obj, defaults: { ...d.defaults, ...(obj.defaults || {}) }, options: { ...d.options, ...(obj.options || {}) } };
+  if (!obj.rulesVer || obj.rulesVer < 2) { s.rulesText = RULES_V2 + '\n' + (obj.rulesText || ''); s.rulesVer = 2; } // 加入新的預設規則
   S.settings = s;
 }
 function loadLocal() { try { const raw = localStorage.getItem(LS_KEY); if (raw) mergeSettings(JSON.parse(raw)); } catch { /* 私密瀏覽等情況 */ } }
@@ -184,14 +196,31 @@ function shorten(title) {
   const chars = [...s];
   return chars.length > 14 ? chars.slice(0, 14).join('').trim() : s;
 }
+const learnKey = (t) => String(t || '').replace(/\s+/g, '').toLowerCase().slice(0, 40);
+function learnName(titles, name) {
+  const L = S.settings.learned || (S.settings.learned = {});
+  const n = (name || '').trim(); if (!n) return false;
+  let changed = false;
+  titles.forEach((t) => { const k = learnKey(t); if (k.length >= 6 && L[k] !== n) { L[k] = n; changed = true; } });
+  const keys = Object.keys(L); if (keys.length > 800) keys.slice(0, keys.length - 800).forEach((k) => delete L[k]);
+  if (changed) saveSettings();
+  return changed;
+}
 function suggestName(titles) {
   if (!titles.length) return '';
+  // 以前改過的名稱優先（記憶）
+  const L = S.settings.learned || {};
+  for (const t of titles) { const v = L[learnKey(t)]; if (v) return v; }
   const rules = parseRules(S.settings.rulesText);
   const names = [];
   for (const t of titles) {
-    const hay = (t + ' ' + toHK(t)).toLowerCase();
-    const r = rules.find((r) => r.keys.some((k) => hay.includes(k) || hay.includes(toHK(k).toLowerCase())));
-    if (r && !names.includes(r.name)) names.push(r.name);
+    const raw = t.toLowerCase(), hk = toHK(t).toLowerCase();
+    let best = null, bestPos = Infinity;
+    rules.forEach((r, ri) => r.keys.forEach((k) => {
+      const p = Math.min(...[raw.indexOf(k), hk.indexOf(k), hk.indexOf(toHK(k).toLowerCase())].filter((x) => x >= 0).concat([Infinity]));
+      if (p < bestPos || (p === bestPos && best && ri < best.ri)) { bestPos = p; best = { r, ri }; }
+    }));
+    if (best && bestPos < Infinity && !names.includes(best.r.name)) names.push(best.r.name);
   }
   if (names.length) return names.length > 3 ? names.slice(0, 3).join('、') + '等' : names.join('、');
   return shorten(titles[0]);
@@ -312,11 +341,46 @@ async function readPngMeta(file) {
   } catch (e) { console.warn('png meta', e); }
   return null;
 }
-const JUNK_TITLE = /争议|爭議|判断依据|判斷依據|交易快照|查看|复制|申请售后|加入购物车/;
+const JUNK_TITLE = /争议|爭議|判断依据|判斷依據|交易快照|查看|复制|申请售后|加入购物车|卖家已发货|自动确认/;
+/* 由訂單頁文字（按次序的行）抽取商品：標題 → 規格 → 價錢 → 數量 */
+function itemsFromLines(all) {
+  const SERVICE = /HK可退|无理由|假一赔|极速退款|价保|退货宝|破损包退|售后快速|争议|判断依据|交易快照|运费险|包邮到港/;
+  const BTN = /^(?:退款|申请售后|加入购物车|确认收货|评价|查看物流|延长收货|再买一单|删除订单|申请开票|打印|追加评论|查看详情|展开全部商品|收起|复制|退货|换货|\s)+$/;
+  const cjk = (s) => (s.match(/[一-鿿]/g) || []).length;
+  const L = all.map((s) => String(s).trim()).filter(Boolean);
+  let s = L.findIndex((l) => /查看交易快照/.test(l));
+  if (s < 0) s = L.findIndex((l) => /^包裹\s*\d/.test(l));
+  if (s < 0) return { items: [], shop: '' };
+  let shop = '';
+  if (s >= 0) { const before = L[s].split('查看交易快照')[0].replace(/^(淘宝|天猫|企|tmall|taobao)\s*/i, '').trim(); if (before.length >= 2) shop = before; }
+  if (!shop) for (let k = s - 1; k >= Math.max(0, s - 3); k--) { if (L[k] && !/^(淘宝|天猫|企|tmall|taobao)$/i.test(L[k]) && cjk(L[k]) + L[k].length >= 2 && !/物流|快递|展开|包裹|\d{8,}/.test(L[k])) { shop = L[k]; break; } }
+  let e = L.findIndex((l, i) => i > s && /^(猜你喜欢|付款详情|订单信息|订单服务|为你推荐)/.test(l));
+  if (e < 0) e = L.length;
+  const items = []; let cur = null;
+  const push = () => { if (cur && cur.title) items.push(cur); cur = null; };
+  for (const l of L.slice(s + 1, e)) {
+    if (/查看交易快照/.test(l)) continue;
+    const pm = l.match(/^[¥￥]\s*([\d,]+\.\d{2})$/);
+    if (pm) { if (cur && cur.price == null) cur.price = parseFloat(pm[1].replace(/,/g, '')); continue; }
+    const qm = l.match(/^[x×ｘ*]\s*(\d{1,4})$/i);
+    if (qm) { if (cur) cur.qty = parseInt(qm[1], 10); continue; }
+    if (SERVICE.test(l) || BTN.test(l) || /^包裹\s*\d|^官方物流|快递\s*\d|^\d{6,}$/.test(l)) continue;
+    const titleLike = cjk(l) >= 6 || (l.length >= 12 && /[A-Za-z一-鿿]/.test(l));
+    if (cur && cur.price == null && !cur.sku && l.length >= 2) { cur.sku = l; continue; }   // 標題後第一行是規格
+    if (titleLike) { push(); cur = { title: l.replace(/\s+/g, ' '), sku: '', price: null, qty: 1 }; }
+  }
+  push();
+  return { items, shop };
+}
+
 function extData(m) {
-  const items = (m.items || []).filter((it) => it && it.title && !JUNK_TITLE.test(it.title)).map((it) => ({ title: it.title, sku: it.sku || '', price: it.price ?? null, qty: it.qty || 1 }));
+  let src = m.items || [];
+  if (!src.filter((it) => it && it.title && !JUNK_TITLE.test(it.title)).length && Array.isArray(m.lines)) src = itemsFromLines(m.lines).items; // 用保存的頁面文字重新分析
+  if ((!m.shop || /免费开店|开店|首页/.test(m.shop)) && Array.isArray(m.lines)) m.shop = itemsFromLines(m.lines).shop;
+  const items = src.filter((it) => it && it.title && !JUNK_TITLE.test(it.title)).map((it) => ({ title: it.title, sku: it.sku || '', price: it.price ?? null, qty: it.qty || 1 }));
   return { kind: 'taobao', fromExt: true, orderNo: m.orderNo || '', hkd: m.paidHKD ?? null, goodsCNY: m.goodsCNY ?? null, discountCNY: m.discountCNY || 0,
-    shipCNY: m.shipCNY || 0, date: (m.created || '').slice(0, 10), shop: m.shop || '', titles: items.map((it) => it.title), items, itemPrices: items.map((it) => it.price).filter((v) => v != null) };
+    shipCNY: m.shipCNY || 0, date: (m.paidAt || m.created || '').slice(0, 10),
+    paidAt: /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(m.paidAt || '') ? m.paidAt : '', createdAt: /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(m.created || '') ? m.created : '', shop: /免费开店/.test(m.shop || '') ? '' : (m.shop || ''), titles: items.map((it) => it.title), items, itemPrices: items.map((it) => it.price).filter((v) => v != null) };
 }
 function newImage(name, base, target, blob) {
   const img = { id: uid('i'), name, base, rot: 0, crop: { x: 0, y: 0, w: 1, h: 1 }, kind: target?.kind || null, kindManual: !!target?.kind,
@@ -515,7 +579,8 @@ function orderInfo(o) {
     const noAmt = rows.filter((r) => r.name && r.hkd == null).length;
     if (noAmt) missing.push({ k: 'amount', text: `${noAmt} 行未填金額` });
   }
-  return { tb, pps, rc, subs, loose, nos, orderNo, hkd, hkdPPS, hkdTB, date, when, titles, cands, missing, busy, shop: pps?.data.shop || '', rows };
+  const ppsOK = hkdPPS != null && hkdTB != null && Math.abs(hkdPPS - hkdTB) <= 0.011;
+  return { tb, pps, rc, subs, loose, nos, orderNo, hkd, hkdPPS, hkdTB, ppsOK, date, when, titles, cands, missing, busy, shop: pps?.data.shop || '', rows };
 }
 const subLabel = (subs, i) => (subs.length > 1 ? `訂單 ${String.fromCharCode(65 + i)}` : '淘寶訂單');
 /* 同一訂單編號的多張截圖算一張淘寶訂單 */
@@ -561,10 +626,11 @@ function reconcile() {
   for (const o of S.orders) {
     if (o.type !== 'taobao') continue;
     const info = orderInfo(o);
-    if (info.hkdPPS == null || info.hkdTB == null) continue;
-    const diff = Math.round((info.hkdPPS - info.hkdTB) * 100) / 100;
+    if (info.hkdPPS == null) continue;
+    const diff = Math.round((info.hkdPPS - (info.hkdTB || 0)) * 100) / 100;
     if (diff < 0.05) continue;
-    const cands = S.orders.filter((x) => x !== o && x.type === 'taobao' && !x.pps && !x.manual && x.taobao.length && !purchaseTimes(x).length && x.taobao.every((id) => !S.images.get(id)?.assignManual))
+    // 一筆 PPS 付款可以包含幾次結帳：找出金額加起來剛好等於 PPS 的淘寶訂單組
+    const cands = S.orders.filter((x) => x !== o && x.type === 'taobao' && !x.pps && !x.manual && x.taobao.length && x.taobao.every((id) => !S.images.get(id)?.assignManual))
       .map((x) => ({ x, v: orderInfo(x).hkdTB })).filter((c) => c.v != null).slice(0, 16);
     let hit = null;
     for (let m = 1; m < (1 << cands.length) && !hit; m++) {
@@ -647,7 +713,8 @@ function rowSpecs(o) {
   const info = orderInfo(o), specs = [];
   if (!info.subs.length) { if (info.pps) specs.push({ key: 'pps#0', subKey: null, titles: info.titles, hkd: info.hkd }); return specs; }
   // 一張淘寶訂單算一行：名稱概括訂單內的商品，金額用該訂單的實付港幣
-  info.subs.forEach((g) => specs.push({ key: `${g.key}#0`, subKey: g.key, titles: g.items.length ? g.items.map((it) => it.title) : g.titles, hkd: g.hkd }));
+  // 有擴充功能資料時用所有商品標題；只有文字辨識時，只用第一個標題命名（其餘多數是規格行）
+  info.subs.forEach((g) => specs.push({ key: `${g.key}#0`, subKey: g.key, titles: g.items.length ? g.items.map((it) => it.title) : g.titles, nameTitles: g.items.length ? g.items.map((it) => it.title) : g.titles.slice(0, 1), hkd: g.hkd }));
   if (specs.length === 1) {
     if (info.pps?.data.remark) specs[0].titles = [...specs[0].titles, info.pps.data.remark];
     if (specs[0].hkd == null) specs[0].hkd = info.hkd;
@@ -667,7 +734,7 @@ function syncRows() {
       let r = S.rows.find((x) => x.orderId === o.id && x.auto && x.autoKey === sp.key);
       if (!r) { r = newRow(o.id, ''); r.auto = true; r.autoKey = sp.key; S.rows.push(r); }
       r.subKey = sp.subKey; r.titles = sp.titles;
-      if (!r.edited) r.name = suggestName(sp.titles);
+      if (!r.edited) r.name = suggestName(sp.nameTitles || sp.titles);
       if (!r.hkdEdited) r.hkd = sp.hkd;
       order.set(r.id, oi * 1000 + si);
     });
@@ -794,7 +861,7 @@ function renderNav() {
     return `<button type="button" class="nav-item ${S.active === o.id ? 'on' : ''}" data-tab="${o.id}" role="tab" aria-selected="${S.active === o.id}">
       <span class="nav-type ${o.type}">${o.type === 'taobao' ? '淘寶' : '一般'}</span><span class="nav-main"><b>${esc(purchaseLabel(o))}</b><span class="mono">${info.hkd != null ? 'HK$' + money(info.hkd) : 'HK$ —'}</span></span>${status}</button>`;
   }).join('');
-  $('#nav').innerHTML = `<button type="button" class="nav-item inbox ${S.active === 'inbox' ? 'on' : ''}" data-tab="inbox" role="tab" aria-selected="${S.active === 'inbox'}"><span class="nav-main"><b>上載及總覽</b><span>${S.orders.length} 次購物${tray.length ? `・${tray.length} 張未分類` : ''}</span></span></button>
+  $('#nav').innerHTML = `<button type="button" class="nav-item inbox ${S.active === 'inbox' ? 'on' : ''}" data-tab="inbox" role="tab" aria-selected="${S.active === 'inbox'}"><span class="nav-main"><b>上載及總覽</b><span>${S.orders.length} 個總購物紀錄${tray.length ? `・${tray.length} 張未分類` : ''}</span></span></button>
     ${items}
     <button type="button" class="nav-item add" data-act="new-general"><span class="nav-main"><b>＋ 一般購物</b><span>自行輸入貨品，不用上載圖片</span></span></button>`;
 }
@@ -806,11 +873,21 @@ function renderInbox() {
   $('#trayList').innerHTML = tray.map(thumbHTML).join('');
   const list = $('#plist');
   if (!S.orders.length) { list.innerHTML = '<div class="empty-state">未有購物紀錄。上載淘寶訂單截圖後，同一交易時間的訂單會自動歸成一次購物；實體店或其他購物可以按左邊「＋ 一般購物」。</div>'; return; }
-  list.innerHTML = `<table class="ptable"><thead><tr><th>購物</th><th>交易時間</th><th class="num">金額</th><th>狀態</th><th></th></tr></thead><tbody>${S.orders.map((o) => {
+  list.innerHTML = S.orders.map((o) => {
     const info = orderInfo(o), nf = Math.max(1, Math.ceil(info.rows.length / rowsPerForm()));
-    return `<tr><td><span class="nav-type ${o.type}">${o.type === 'taobao' ? '淘寶' : '一般'}</span> ${esc(purchaseLabel(o))}</td><td class="mono">${esc(info.when || info.date || '—')}</td><td class="num mono">${info.hkd != null ? 'HK$' + money(info.hkd) : '—'}</td>
-      <td class="pstat">${missingHTML(info, o)}</td><td><button class="btn small" type="button" data-tab="${o.id}">打開（${nf} 張申請表）</button></td></tr>`;
-  }).join('')}</tbody></table>`;
+    const isTB = o.type === 'taobao';
+    const body = isTB
+      ? (info.subs.length ? `<table class="ptable"><thead><tr><th>訂單</th><th>貨品名稱</th><th class="num">淘寶實付</th><th>收據</th></tr></thead><tbody>${info.subs.map((g, i) => {
+          const r = info.rows.find((x) => x.subKey === g.key);
+          return `<tr><td class="mono">${subLabel(info.subs, i)}<br><span class="muted">${esc(g.no || '—')}</span></td><td>${esc(r?.name || '')}</td><td class="num mono">${g.hkd != null ? 'HK$' + money(g.hkd) : '—'}</td><td>${g.rc.length ? `<span class="chip ok">${g.rc.length} 張</span>` : '<span class="chip bad">欠</span>'}</td></tr>`;
+        }).join('')}</tbody></table>` : '<p class="muted">未有淘寶訂單截圖</p>')
+      : `<table class="ptable"><thead><tr><th>貨品名稱</th><th>編號</th><th class="num">金額</th></tr></thead><tbody>${info.rows.map((r) => `<tr><td>${esc(r.name || '（未填）')}</td><td class="mono">${esc(r.code || '')}</td><td class="num mono">${r.hkd != null ? 'HK$' + money(r.hkd) : '—'}</td></tr>`).join('')}</tbody></table>`;
+    const pps = isTB ? `<div class="ov-pps">${info.pps
+      ? (info.ppsOK ? `<span class="chip ok">PPS HK$${money(info.hkdPPS)} ＝ 訂單合計</span>` : `<span class="chip warn">PPS HK$${money(info.hkdPPS)}${info.hkdTB != null ? `，訂單合計 HK$${money(info.hkdTB)}` : ''}</span>`) + `<span class="muted">付款時間 ${esc(info.pps.data.paidAt || info.pps.data.date || '未讀到')}</span>`
+      : `<span class="chip bad">欠 PPS 付款紀錄</span>${info.hkdTB != null ? `<span class="muted">訂單合計 HK$${money(info.hkdTB)}</span>` : ''}`}</div>` : '';
+    return `<article class="ov"><div class="ov-h"><span class="nav-type ${o.type}">${isTB ? '淘寶' : '一般'}</span><b>${esc(purchaseLabel(o))}</b><span class="mono muted">${esc(info.when || '')}</span><span class="grow"></span><span class="amt">${info.hkd != null ? 'HK$' + money(info.hkd) : 'HK$ —'}</span><button class="btn small" type="button" data-tab="${o.id}">打開（${nf} 張申請表）</button></div>
+      <div class="ov-miss">${missingHTML(info, o)}</div>${body}${pps}</article>`;
+  }).join('');
 }
 
 /* ================= 介面：一次購物 ================= */
@@ -848,7 +925,7 @@ function checklistHTML(o, info) {
   items.push(info.pps ? ok('PPS 付款紀錄') : bad('欠 PPS 付款紀錄'));
   info.subs.forEach((g, i) => items.push(g.rc.length ? ok(`${subLabel(info.subs, i)} 收據 ${g.rc.length} 張`) : bad(`欠收據：${subLabel(info.subs, i)}${g.no ? `（…${g.no.slice(-4)}）` : ''}`)));
   if (info.loose.length) items.push(warn(`${info.loose.length} 張收據未配對`));
-  const m = info.missing.find((x) => x.k === 'amount'); if (m) items.push(warn(m.text));
+  if (info.pps && info.hkdTB != null) items.push(info.ppsOK ? ok(`PPS HK$${money(info.hkdPPS)} ＝ ${info.subs.length} 張訂單合計`) : warn(`PPS HK$${money(info.hkdPPS)}，訂單合計 HK$${money(info.hkdTB)}，相差 HK$${money(Math.abs(info.hkdPPS - info.hkdTB))}`));
   if (info.busy) items.push('<li class="busy"><span class="ck">…</span>文字辨識中</li>');
   return `<b>${info.missing.length ? '還欠' : '齊單'}</b><ul>${items.join('')}</ul>`;
 }
@@ -1561,6 +1638,10 @@ function bind() {
     if (t.id === 'pv_cap') { S.settings.caption = t.checked; saveSettings(); schedulePreview(); return; }
     if (t.dataset.pf === 'includeCode') { o.includeCode = t.checked; markDirty(); schedulePreview(); return; }
     const f = FIELDS.find((x) => x.k === (t.dataset.f || t.dataset.shared)); if (f?.opt) rememberOption(f.opt, t.value);
+    if (t.dataset.f === 'name') {
+      const r = S.rows.find((x) => x.id === t.closest('[data-row]')?.dataset.row);
+      if (r && r.titles?.length && learnName(r.titles, r.name)) toast('已記住：以後同一件商品會自動用「' + r.name + '」');
+    }
     if (t.dataset.f === 'name' || t.dataset.pf === 'title') renderNav();
   };
   const onInput = (e) => {

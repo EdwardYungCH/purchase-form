@@ -102,51 +102,51 @@ function pfData(limit) {
     const v = /\d+\.\d{2}/.test(l) ? l : (lines[i + 1] || '');
     if (/^(运费|国内运费)/.test(l) && !/海外/.test(l)) { const m = money(v); if (m != null) ship += m; }
     if (/^海外运费/.test(l)) { const m = money(v); if (m != null) out.overseasCNY = m; }
-    if (/^(店铺优惠|官方立减|平台优惠|优惠券|红包|跨店满减|商品优惠|淘金币)/.test(l)) { const m = money(v); if (m != null) disc += m; }
+    if (/^(店铺优惠|官方立减|平台优惠|优惠券|红包|跨店满减|商品优惠|淘金币|首单礼金|礼金|回购礼金)/.test(l)) { const m = money(v); if (m != null && !/HK/i.test(v)) disc += m; }
+    if (/^支付优惠/.test(l)) { const m = money(v); if (m != null) out.payDiscountHKD = m; }
     if (/^支付手续费/.test(l)) fee = money(v);
   });
   out.shipCNY = ship; out.discountCNY = Math.round(disc * 100) / 100; out.feeHKD = fee;
   out.paidAt = pick(/付款时间\s*[:：]?\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/) || '';
   out.created = pick(/创建时间\s*[:：]?\s*(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2}:\d{2})?)/) || pick(/付款时间\s*[:：]?\s*(\d{4}-\d{2}-\d{2})/) || '';
 
-  // 商品：先找數量（x6），再向上找包含價錢的一行，標題取該行內第一行長中文
-  const SERVICE = /HK可退|无理由|假一赔|极速退款|价保|申请售后|加入购物车|争议|判断依据|交易快照|运费险|退换|再买一单|查看物流/;
-  const cjk = (s) => (s.match(/[一-鿿]/g) || []).length;
-  const top = (el) => el.getBoundingClientRect().top + window.scrollY;
-  const qtyEls = [];
-  { const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT); let n;
-    while ((n = w.nextNode())) { const t = n.nodeValue.trim(); if (/^[x×]\s*\d{1,4}$/.test(t)) { const el = n.parentElement; const r = el && el.getBoundingClientRect(); if (r && r.width > 0 && top(el) < limit) qtyEls.push(el); } } }
-  const items = [];
-  qtyEls.forEach((q) => {
-    let c = q, row = null;
-    for (let i = 0; i < 10 && c.parentElement; i++) {
-      c = c.parentElement;
-      const nq = qtyEls.filter((x) => c.contains(x)).length;
-      if (nq > 1) break;
-      const t = c.innerText || '';
-      if (/[¥￥]\s*[\d,]+\.\d{2}/.test(t) && t.split('\n').some((l) => cjk(l) >= 6 && !SERVICE.test(l) && !/[¥￥]/.test(l))) { row = c; break; }
-    }
-    if (!row) return;
-    const lines = row.innerText.split('\n').map((s) => s.trim()).filter(Boolean);
-    const ti = lines.findIndex((l) => cjk(l) >= 6 && !SERVICE.test(l) && !/[¥￥]/.test(l));
-    const title = lines[ti].replace(/\s+/g, ' ');
-    const sku = lines.slice(ti + 1).filter((l) => !SERVICE.test(l) && !/[¥￥]|^[x×]\s*\d/.test(l)).slice(0, 1).join(' ');
-    const pm = row.innerText.match(/[¥￥]\s*([\d,]+\.\d{2})/);
-    const it = { title, sku, price: pm ? num(pm[1]) : null, qty: parseInt(q.textContent.replace(/\D/g, ''), 10) || 1 };
-    if (!items.some((x) => x.title === it.title && x.sku === it.sku)) items.push(it);
-  });
-  // 後備：用商品連結
-  if (!items.length) {
-    [...document.querySelectorAll('a[href]')].forEach((a) => {
-      const t = (a.innerText || '').trim().replace(/\s+/g, ' ');
-      const r = a.getBoundingClientRect();
-      if (r.width > 0 && cjk(t) >= 6 && !SERVICE.test(t) && top(a) < limit && /item\.taobao\.com|detail\.tmall\.com|item\.htm/i.test(a.href) && !items.some((x) => x.title === t))
-        items.push({ title: t, sku: '', price: null, qty: 1 });
-    });
-  }
-  const links = [];
-  out.items = items;
-  const shopA = [...document.querySelectorAll('a[href*="store.taobao.com"],a[href*="shop"],a[href*=".tmall.com/"]')].find((a) => (a.innerText || '').trim().length >= 2 && top(a) < limit && !links.includes(a));
-  out.shop = shopA ? shopA.innerText.trim() : '';
+  // 商品：按頁面文字次序讀取（不依賴網頁結構）；同時保存這段文字，方便助手日後重新分析
+  const all = lines;
+  const r = itemsFromLines(all);
+  out.items = r.items; out.shop = r.shop;
+  let s0 = all.findIndex((l) => /^包裹\s*\d|查看交易快照/.test(l)); if (s0 < 0) s0 = 0;
+  let e0 = all.findIndex((l, i) => i > s0 && /^(猜你喜欢|为你推荐)/.test(l)); if (e0 < 0) e0 = all.length;
+  out.lines = all.slice(Math.max(0, s0 - 3), e0).slice(0, 600);
   return out;
+}
+
+/* 由訂單頁文字（按次序的行）抽取商品：標題 → 規格 → 價錢 → 數量 */
+function itemsFromLines(all) {
+  const SERVICE = /HK可退|无理由|假一赔|极速退款|价保|退货宝|破损包退|售后快速|争议|判断依据|交易快照|运费险|包邮到港/;
+  const BTN = /^(?:退款|申请售后|加入购物车|确认收货|评价|查看物流|延长收货|再买一单|删除订单|申请开票|打印|追加评论|查看详情|展开全部商品|收起|复制|退货|换货|\s)+$/;
+  const cjk = (s) => (s.match(/[一-鿿]/g) || []).length;
+  const L = all.map((s) => String(s).trim()).filter(Boolean);
+  let s = L.findIndex((l) => /查看交易快照/.test(l));
+  if (s < 0) s = L.findIndex((l) => /^包裹\s*\d/.test(l));
+  if (s < 0) return { items: [], shop: '' };
+  let shop = '';
+  if (s >= 0) { const before = L[s].split('查看交易快照')[0].replace(/^(淘宝|天猫|企|tmall|taobao)\s*/i, '').trim(); if (before.length >= 2) shop = before; }
+  if (!shop) for (let k = s - 1; k >= Math.max(0, s - 3); k--) { if (L[k] && !/^(淘宝|天猫|企|tmall|taobao)$/i.test(L[k]) && cjk(L[k]) + L[k].length >= 2 && !/物流|快递|展开|包裹|\d{8,}/.test(L[k])) { shop = L[k]; break; } }
+  let e = L.findIndex((l, i) => i > s && /^(猜你喜欢|付款详情|订单信息|订单服务|为你推荐)/.test(l));
+  if (e < 0) e = L.length;
+  const items = []; let cur = null;
+  const push = () => { if (cur && cur.title) items.push(cur); cur = null; };
+  for (const l of L.slice(s + 1, e)) {
+    if (/查看交易快照/.test(l)) continue;
+    const pm = l.match(/^[¥￥]\s*([\d,]+\.\d{2})$/);
+    if (pm) { if (cur && cur.price == null) cur.price = parseFloat(pm[1].replace(/,/g, '')); continue; }
+    const qm = l.match(/^[x×ｘ*]\s*(\d{1,4})$/i);
+    if (qm) { if (cur) cur.qty = parseInt(qm[1], 10); continue; }
+    if (SERVICE.test(l) || BTN.test(l) || /^包裹\s*\d|^官方物流|快递\s*\d|^\d{6,}$/.test(l)) continue;
+    const titleLike = cjk(l) >= 6 || (l.length >= 12 && /[A-Za-z一-鿿]/.test(l));
+    if (cur && cur.price == null && !cur.sku && l.length >= 2) { cur.sku = l; continue; }   // 標題後第一行是規格
+    if (titleLike) { push(); cur = { title: l.replace(/\s+/g, ' '), sku: '', price: null, qty: 1 }; }
+  }
+  push();
+  return { items, shop };
 }

@@ -92,6 +92,14 @@ const Parser = (() => {
     const on = flat.match(/T200P(\d{15,20})/i); if (on) out.orderNo = on[1];
     const dt = flat.match(/(\d{2})\/(\d{2})\/(\d{2})(\d{2}:\d{2}(?::\d{2})?)?/);
     if (dt) { out.date = `20${dt[3]}-${dt[2]}-${dt[1]}`; if (dt[4]) out.paidAt = `${out.date} ${dt[4].length === 5 ? dt[4] + ':00' : dt[4]}`; }
+    if (!out.paidAt) {
+      // 後備：「交易成功時間」那一行的數字（日日月月年年時時分分秒秒），OCR 把 / : 讀錯時仍可用
+      const tr = rows.find((r) => /[交文]易成功|成功[時时]間|成功[時时]间/.test(r.text.replace(/\s/g, '')));
+      const dg = tr ? tr.text.replace(/[^\d]/g, '') : '';
+      const m = dg.match(/(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/);
+      if (m && +m[1] >= 1 && +m[1] <= 31 && +m[2] >= 1 && +m[2] <= 12 && +m[4] < 24 && +m[5] < 60 && +m[6] < 60) { out.date = `20${m[3]}-${m[2]}-${m[1]}`; out.paidAt = `${out.date} ${m[4]}:${m[5]}:${m[6]}`; }
+    }
+    if (!out.date) { const tn = flat.match(/[交文]易[號号][碼码]\D{0,3}(20\d{2})(\d{2})(\d{2})/); if (tn) out.date = `${tn[1]}-${tn[2]}-${tn[3]}`; }
     const shopRow = rowAfter(rows, /[订訂][单單哩]?[详詳][情]/);
     if (shopRow && shopRow.segs.length > 1) out.shop = shopRow.segs.slice(1).map((s) => s.text).join('').replace(/[与與]其他.*$/, '').trim();
     // 備註：備註行起至結尾
@@ -138,7 +146,7 @@ const Parser = (() => {
     out.createdAt = dtAt(/[创創]建时间|[创創]建時間/);
     if (!out.paidAt && !out.createdAt) { const m = flat.match(/(20\d{2})-(\d{2})-(\d{2})(\d{2}):(\d{2}):(\d{2})/); if (m) out.createdAt = `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}`; }
     // 商品標題：左欄、長中文、非物流/地址
-    const BAD = /快递|快遞|物流|签收|簽收|已送达|运费|地址|省.*市|[区區].*[路街号號]|价保|退款|退货|售后|购物车|交易成功|交易快照|订单|收货|发票|评价|再买|删除|特别行政区|转运|集运|仓|电话|联系|微信|公众号|官方物流|旗舰店|专营店|旗艦店|^\W*$/;
+    const BAD = /卖家已发货|买家已付款|等待|自动确认|还剩|还简|还币|快运|展开全部|快递|快遞|物流|签收|簽收|已送达|运费|地址|省.*市|[区區].*[路街号號]|价保|退款|退货|售后|购物车|交易成功|交易快照|订单|收货|发票|评价|再买|删除|特别行政区|转运|集运|仓|电话|联系|微信|公众号|官方物流|旗舰店|专营店|旗艦店|^\W*$/;
     const leftLimit = imgW ? imgW * 0.68 : Infinity;
     const itemPrices = [];
     rows.forEach((r, idx) => {
@@ -147,7 +155,12 @@ const Parser = (() => {
         const t = s.text.replace(/\s/g, '');
         if (cjkCount(t) < 8 || BAD.test(t)) return;
         // 去掉黏住的價錢
-        const clean = t.replace(/[¥羊半芋苦对芭￥]?\d+\.\d{2}.*$/, '');
+        let clean = t.replace(/[¥羊半芋苦对芭￥]?\d+\.\d{2}.*$/, '');
+        // 去掉商品圖片被誤讀成的前綴雜字（例如「ESGE3B。」「<久。wwesss。。。」）
+        const dot = clean.lastIndexOf('。', 14); if (dot >= 0 && dot < 14) clean = clean.slice(dot + 1);
+        clean = clean.replace(/^[^\u4e00-\u9fffA-Za-z0-9【(（]+/, '');
+        const sym = clean.slice(0, 12).search(/[:=<>;|][^:=<>;|]*$/); // 例如「人SEE:3=35直插…」
+        if (sym >= 0) { const cut = clean.slice(0, 12).lastIndexOf(clean.slice(0, 12).match(/[:=<>;|]/g).pop()); clean = clean.slice(cut + 1).replace(/^[\d.\s]+/, ''); }
         if (cjkCount(clean) < 8) return;
         out.titles.push(clean);
       });
