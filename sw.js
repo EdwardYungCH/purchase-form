@@ -1,5 +1,5 @@
 /* 離線快取：第一次打開時把程式、中文辨識資料存起來，之後沒有網絡也可以用 */
-const VERSION = 'pf-v10';
+const VERSION = 'pf-v11';
 const PRECACHE = [
   './', 'index.html', 'js/app.js', 'js/parser.js', 'manifest.webmanifest',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
@@ -26,8 +26,8 @@ self.addEventListener('fetch', (e) => {
   if (!same && !fonts) return;
   if (same && (req.mode === 'navigate' || FRESH.test(url.pathname))) {
     // 主程式：先試網絡（有更新就用新版），失敗才用快取
-    e.respondWith(fetch(req).then((r) => { if (r.ok) { const cp = r.clone(); caches.open(VERSION).then((c) => c.put(req, cp)); } return r; })
-      .catch(() => caches.match(req).then((m) => m || caches.match('index.html'))));
+    e.respondWith(fetch(new Request(req.url, { cache: 'no-cache', credentials: 'same-origin' })).then((r) => { if (r.ok) { const cp = r.clone(); caches.open(VERSION).then((c) => c.put(req, cp)); } return r; })
+      .catch(() => caches.match(req, { ignoreSearch: true }).then((m) => m || caches.match('index.html'))));
     return;
   }
   // 其他檔案（程式庫、辨識資料、字型、圖示）：先用快取

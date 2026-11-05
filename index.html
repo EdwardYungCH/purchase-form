@@ -62,6 +62,7 @@ button { cursor: pointer; }
 .brand { flex: 1 1 260px; min-width: 0; }
 .brand h1 { font: 700 22px/1.2 var(--f-display); margin: 0; letter-spacing: .02em; }
 .brand p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+.brand .ver { margin-left: 6px; padding: 1px 7px; border: 1px solid var(--line); border-radius: 99px; font-size: 11px; white-space: nowrap; }
 .top-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; font-size: 12.5px; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); white-space: nowrap; }
@@ -331,7 +332,7 @@ dialog::backdrop { background: rgba(10,14,20,.55); }
   <div class="wrap">
     <div class="brand">
       <h1>購物記錄表助手</h1>
-      <p>淘寶訂單、PPS 紀錄和收據 → 申請支票支付購物款項表格連附件，A4 列印</p>
+      <p>淘寶訂單、PPS 紀錄和收據 → 申請支票支付購物款項表格連附件，A4 列印 <span class="ver" title="如果版本不是最新，關掉所有分頁再開一次">版本 2026.11.05b</span></p>
     </div>
     <div class="top-actions">
       <span id="saveChip" class="chip">未有資料</span>
@@ -435,11 +436,11 @@ window.PF_LIBS = {
   jspdf: 'vendor/jspdf/jspdf.umd.min.js',
 };
 </script>
-<script src="js/parser.js"></script>
-<script src="js/app.js"></script>
+<script src="js/parser.js?v=2026.11.05b"></script>
+<script src="js/app.js?v=2026.11.05b"></script>
 <script>
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {}));
 }
 </script>
 </body>
